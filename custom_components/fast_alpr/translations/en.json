@@ -3,61 +3,83 @@
   "config": {
     "step": {
       "user": {
-        "title": "Configure FastALPR",
-        "description": "Select a camera and optional vehicle-detection sensor. FastALPR inference runs in the separate FastALPR Inference app. Enter its internal URL, such as http://APP-HOSTNAME:8099. Known plates remain private in Home Assistant.",
+        "title": "Choose recognition trigger",
+        "menu_options": {
+          "automatic": "Automatic (vehicle detection) — recommended",
+          "manual": "Manual or external automation"
+        }
+      },
+      "automatic": {
+        "title": "Configure automatic recognition",
+        "description": "Choose the camera, vehicle-detection binary sensor, and registrations to recognise. The inference app is found automatically.",
         "data": {
           "camera": "Camera",
-          "detection_entity": "Vehicle detection binary sensor (optional)",
-          "known_plates": "Known registrations (REGISTRATION=Vehicle name)",
-          "match_event": "Match event type",
-          "frames": "Images per scan",
-          "interval_ms": "Milliseconds between images",
-          "min_matching_frames": "Minimum agreeing images",
-          "min_confidence": "Minimum OCR confidence (0.0–1.0)",
-          "cooldown_seconds": "Repeat detection cooldown (seconds)",
-          "signal_seconds": "Detection signal duration (seconds)",
-          "backend_url": "Inference app URL (Home Assistant internal network)"
+          "detection_entity": "Vehicle detection binary sensor",
+          "known_plates": "Known registrations (REGISTRATION=Vehicle name)"
+        }
+      },
+      "manual": {
+        "title": "Configure manual recognition",
+        "description": "Select a camera and registrations. Recognition runs only when fast_alpr.scan is called.",
+        "data": {
+          "camera": "Camera",
+          "known_plates": "Known registrations (REGISTRATION=Vehicle name)"
         }
       }
     },
     "error": {
-      "invalid_camera": "Select an available camera entity",
-      "invalid_detector": "Select a valid binary sensor entity",
-      "invalid_event": "Event type must contain lowercase letters, digits and underscores",
-      "invalid_frames": "Minimum agreeing images cannot exceed images per scan",
-      "invalid_plates": "Enter one REGISTRATION=Vehicle name per line; spaces in registrations are accepted",
-      "invalid_backend": "Use an HTTP or HTTPS URL with a host (no credentials or paths)"
+      "invalid_camera": "Select a valid camera entity",
+      "invalid_detector": "Select a vehicle detection binary sensor",
+      "invalid_plates": "Enter REGISTRATION=Vehicle name, one per line. Spaces in plates are accepted.",
+      "backend_unavailable": "FastALPR Inference app not discovered. Install and start it from the Home Assistant Apps store."
     },
     "abort": {
-      "already_configured": "This camera is already configured"
+      "already_configured": "This camera already has a FastALPR integration",
+      "invalid_backend": "Invalid Supervisor discovery information"
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "FastALPR options",
+        "title": "FastALPR settings",
+        "menu_options": {
+          "automatic": "Automatic vehicle detection",
+          "manual": "Manual / external automation",
+          "advanced": "Advanced recognition settings"
+        }
+      },
+      "automatic": {
+        "title": "Automatic recognition",
+        "description": "An active vehicle sensor starts a scan.",
         "data": {
-          "camera": "Camera",
-          "detection_entity": "Vehicle detection binary sensor (optional)",
-          "known_plates": "Known registrations (REGISTRATION=Vehicle name)",
-          "match_event": "Match event type",
-          "frames": "Images per scan",
-          "interval_ms": "Milliseconds between images",
-          "min_matching_frames": "Minimum agreeing images",
+          "detection_entity": "Vehicle detection binary sensor",
+          "known_plates": "Known registrations"
+        }
+      },
+      "manual": {
+        "title": "Manual recognition",
+        "description": "Run scans with the fast_alpr.scan action.",
+        "data": {
+          "known_plates": "Known registrations"
+        }
+      },
+      "advanced": {
+        "title": "Advanced recognition settings",
+        "description": "Defaults favour rapid recognition from two agreeing still images. The backend URL is normally discovered automatically; override it only for an external backend.",
+        "data": {
+          "frames": "Maximum images per scan",
+          "interval_ms": "Time between images (milliseconds)",
+          "min_matching_frames": "Images required to agree",
           "min_confidence": "Minimum OCR confidence (0.0–1.0)",
-          "cooldown_seconds": "Repeat detection cooldown (seconds)",
-          "signal_seconds": "Detection signal duration (seconds)",
-          "backend_url": "Inference app URL (Home Assistant internal network)"
+          "cooldown_seconds": "Repeat match cooldown (seconds)",
+          "signal_seconds": "Recognition signal duration (seconds)",
+          "backend_url": "Backend URL override (optional)"
         }
       }
     },
     "error": {
-      "invalid_camera": "Select an available camera entity",
-      "invalid_detector": "Select a valid binary sensor entity",
-      "invalid_event": "Event type must contain lowercase letters, digits and underscores",
-      "invalid_frames": "Minimum agreeing images cannot exceed images per scan",
-      "invalid_plates": "Enter one REGISTRATION=Vehicle name per line; spaces in registrations are accepted",
-      "invalid_backend": "Use an HTTP or HTTPS URL with a host (no credentials or paths)"
+      "invalid_frames": "Required agreeing images cannot exceed the maximum images",
+      "invalid_backend": "Enter a valid HTTP or HTTPS backend URL"
     }
   }
 }

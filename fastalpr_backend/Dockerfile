@@ -9,7 +9,10 @@ LABEL io.hass.version="${BUILD_VERSION}" \
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     OMP_NUM_THREADS=2 \
-    OPENBLAS_NUM_THREADS=2
+    OPENBLAS_NUM_THREADS=2 \
+    HOME=/data \
+    XDG_CACHE_HOME=/data/cache \
+    HF_HOME=/data/cache/huggingface
 
 RUN pip install --no-cache-dir "fast-alpr[onnx]==0.4.0"
 

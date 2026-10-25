@@ -61,9 +61,13 @@ async def async_setup_entry(hass, entry):
     entry.runtime_data = runtime
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    @callback
+    def refresh_backend_health(_now):
+        """Ensure the health timer runs on HA's event loop, not an executor thread."""
+        hass.async_create_task(runtime.refresh_backend_status())
+
     entry.async_on_unload(async_track_time_interval(
-        hass, lambda now: hass.async_create_task(runtime.refresh_backend_status()),
-        timedelta(seconds=30),
+        hass, refresh_backend_health, timedelta(seconds=30),
     ))
     hass.async_create_task(runtime.refresh_backend_status())
 

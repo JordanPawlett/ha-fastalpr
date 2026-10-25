@@ -47,6 +47,7 @@ class FastAlprRuntime:
         self.last_capture_ms: int | None = None
         self.last_inference_ms: int | None = None
         self.detected = False
+        self.backend_ready = False
         self.processed_batches = 0
         self._cancel_reset = None
 
@@ -79,6 +80,26 @@ class FastAlprRuntime:
         if self._closed or (self.task is not None and not self.task.done()):
             return
         self.task = self.hass.async_create_task(self.capture_and_recognise())
+
+    async def refresh_backend_status(self):
+        """Report health and model readiness without exposing backend details."""
+        backend = self.options.get(CONF_BACKEND_URL)
+        ready = False
+        if backend:
+            try:
+                session = async_get_clientsession(self.hass)
+                async with session.get(
+                    backend.rstrip("/") + "/health",
+                    timeout=ClientTimeout(total=4),
+                ) as response:
+                    if response.status == 200:
+                        payload = await response.json()
+                        ready = payload.get("model_ready") is True
+            except Exception:
+                pass
+        if self.backend_ready != ready:
+            self.backend_ready = ready
+            self.notify()
 
     async def _recognise_frame(self, index: int, content: bytes, mime: str, endpoint: str):
         began = time.monotonic()

@@ -1,11 +1,13 @@
 """Local ALPR from any Home Assistant camera supporting still images."""
 from __future__ import annotations
 
+from datetime import timedelta
+
 import voluptuous as vol
 from homeassistant.const import Platform
 from homeassistant.core import callback
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 
 from .const import (
     CONF_BACKEND_URL, CONF_CAMERA, CONF_DETECTION_ENTITY,
@@ -44,6 +46,12 @@ async def async_setup_entry(hass, entry):
     runtime = FastAlprRuntime(hass, entry)
     entry.runtime_data = runtime
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    entry.async_on_unload(async_track_time_interval(
+        hass, lambda now: hass.async_create_task(runtime.refresh_backend_status()),
+        timedelta(seconds=30),
+    ))
+    hass.async_create_task(runtime.refresh_backend_status())
 
     detector = (runtime.options.get(CONF_DETECTION_ENTITY)
                 if runtime.options.get(CONF_TRIGGER_MODE, TRIGGER_AUTOMATIC) == TRIGGER_AUTOMATIC else None)

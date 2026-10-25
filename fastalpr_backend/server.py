@@ -5,6 +5,9 @@ import json
 import logging
 import os
 import re
+import socket
+import time
+import urllib.request
 import statistics
 import tempfile
 import threading
@@ -18,6 +21,7 @@ MAX_BATCH_IMAGES = 20
 MEDIA_DIR = Path("/media").resolve()
 LOGGER = logging.getLogger("fastalpr_backend")
 _MODEL = None
+_MODEL_READY = threading.Event()
 _MODEL_LOCK = threading.Lock()
 
 
@@ -29,7 +33,47 @@ def _model():
             detector_model="yolo-v9-t-384-license-plate-end2end",
             ocr_model="cct-s-v2-global-model",
         )
+    _MODEL_READY.set()
     return _MODEL
+
+
+def _announce_discovery():
+    """Advertise backend address through the supported Supervisor API."""
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    if not token:
+        LOGGER.warning("Supervisor discovery token unavailable")
+        return
+    payload = json.dumps({
+        "service": "fast_alpr",
+        "config": {"host": socket.gethostname(), "port": PORT},
+    }).encode()
+    for attempt in range(8):
+        try:
+            request = urllib.request.Request(
+                "http://supervisor/discovery", data=payload,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                if response.status == 200:
+                    LOGGER.info("Published FastALPR backend discovery")
+                    return
+        except Exception as exc:
+            LOGGER.warning("Supervisor discovery attempt %s failed: %s", attempt + 1, type(exc).__name__)
+        time.sleep(2)
+
+
+def _preload_model():
+    """Warm ONNX models before the first vehicle detection."""
+    try:
+        with _MODEL_LOCK:
+            _model()
+        LOGGER.info("FastALPR models ready")
+    except Exception:
+        LOGGER.exception("FastALPR model preload failed")
 
 
 def _normalize_plate(raw):
@@ -86,7 +130,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
-            self._json(200, {"status": "ok"})
+            self._json(200, {"status": "ok", "model_ready": _MODEL_READY.is_set()})
+        elif self.path == "/ready":
+            self._json(200 if _MODEL_READY.is_set() else 503, {"model_ready": _MODEL_READY.is_set()})
         else:
             self._json(404, {"error": "not found"})
 
@@ -137,6 +183,8 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     os.makedirs("/data/cache", exist_ok=True)
     LOGGER.info("Starting FastALPR backend on internal port %s", PORT)
+    threading.Thread(target=_preload_model, daemon=True).start()
+    threading.Thread(target=_announce_discovery, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
 
 

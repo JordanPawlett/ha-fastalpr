@@ -1,6 +1,7 @@
 """Constants for FastALPR."""
 DOMAIN = "fast_alpr"
 EVENT_MATCH = "fast_alpr_match"
+EVENT_WATCHLIST_MATCH = "fast_alpr_watchlist_match"
 EVENT_SCAN = "fast_alpr_scan"
 
 CONF_BACKEND_URL = "backend_url"
@@ -8,6 +9,7 @@ CONF_MATCH_EVENT = "match_event"  # Legacy event compatibility
 CONF_CAMERA = "camera"
 CONF_DETECTION_ENTITY = "detection_entity"
 CONF_KNOWN_PLATES = "known_plates"
+CONF_WATCHLIST_PLATES = "watchlist_plates"
 CONF_TRIGGER_MODE = "trigger_mode"
 TRIGGER_AUTOMATIC = "automatic"
 TRIGGER_MANUAL = "manual"

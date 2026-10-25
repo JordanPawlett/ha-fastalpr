@@ -10,6 +10,8 @@ from homeassistant.helpers.event import async_track_state_change_event
 from .const import CONF_CAMERA, CONF_DETECTION_ENTITY, DOMAIN
 from .runtime import FastAlprRuntime
 
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
 SCAN_SERVICE = "scan"
 

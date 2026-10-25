@@ -19,18 +19,18 @@ from .const import (
 from .processor import parse_known_plates
 
 
-def schema(options: dict | None = None) -> vol.Schema:
+def schema(options: dict | None = None, *, include_camera: bool = True) -> vol.Schema:
     o = options or {}
     camera_key = (
         vol.Required(CONF_CAMERA, default=o[CONF_CAMERA])
         if CONF_CAMERA in o else vol.Required(CONF_CAMERA)
     )
-    detector_key = (
-        vol.Optional(CONF_DETECTION_ENTITY, default=o[CONF_DETECTION_ENTITY])
-        if o.get(CONF_DETECTION_ENTITY) else vol.Optional(CONF_DETECTION_ENTITY)
+    # A schema default would restore the old detector when the user clears it.
+    detector_key = vol.Optional(
+        CONF_DETECTION_ENTITY,
+        description={"suggested_value": o.get(CONF_DETECTION_ENTITY, "")},
     )
-    return vol.Schema({
-        camera_key: selector.EntitySelector(selector.EntitySelectorConfig(domain="camera")),
+    fields = {
         detector_key: selector.EntitySelector(selector.EntitySelectorConfig(domain="binary_sensor")),
         vol.Required(CONF_KNOWN_PLATES, default=o.get(CONF_KNOWN_PLATES, "")):
             selector.TextSelector(selector.TextSelectorConfig(multiline=True)),
@@ -47,7 +47,10 @@ def schema(options: dict | None = None) -> vol.Schema:
             vol.All(vol.Coerce(int), vol.Range(min=0, max=3600)),
         vol.Required(CONF_SIGNAL_SECONDS, default=o.get(CONF_SIGNAL_SECONDS, DEFAULT_SIGNAL_SECONDS)):
             vol.All(vol.Coerce(int), vol.Range(min=1, max=3600)),
-    })
+    }
+    if include_camera:
+        fields[camera_key] = selector.EntitySelector(selector.EntitySelectorConfig(domain="camera"))
+    return vol.Schema(fields)
 
 
 def validate(hass, values: dict) -> dict:
@@ -110,11 +113,12 @@ class FastAlprOptionsFlow(config_entries.OptionsFlow):
         errors = {}
         if user_input is not None:
             try:
-                values = validate(self.hass, user_input)
+                # Keep the original camera: it is this entry's unique ID.
+                values = validate(self.hass, {**user_input, CONF_CAMERA: self._config_entry.data[CONF_CAMERA]})
             except ValueError as exc:
                 errors["base"] = flow_error(exc)
             else:
-                # Allow the optional detector to be cleared in the UI.
+                # The camera cannot be changed without replacing the entry.
                 return self.async_create_entry(title="", data=values)
         initial = {**self._config_entry.data, **self._config_entry.options}
-        return self.async_show_form(step_id="init", data_schema=schema(initial), errors=errors)
+        return self.async_show_form(step_id="init", data_schema=schema(initial, include_camera=False), errors=errors)

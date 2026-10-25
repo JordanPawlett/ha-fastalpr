@@ -16,6 +16,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: home-assistant/actions/hassfest@master
+  dependency-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Install inference dependency on Home Assistant's Python version
+        run: python -m pip install 'fast-alpr[onnx]==0.4.0'
+      - name: Verify CPU ONNX runtime and load pretrained models
+        run: |
+          python - <<'PY'
+          import onnxruntime as ort
+          from fast_alpr import ALPR
+          assert 'CPUExecutionProvider' in ort.get_available_providers()
+          ALPR(
+              detector_model='yolo-v9-t-384-license-plate-end2end',
+              ocr_model='cct-s-v2-global-model',
+          )
+          print('FastALPR models initialised with CPU ONNX')
+          PY
   unit-tests:
     runs-on: ubuntu-latest
     steps:
@@ -24,4 +45,5 @@ jobs:
         with:
           python-version: '3.13'
       - run: python -m pip install pytest
+      - run: python -m compileall -q custom_components
       - run: python -m pytest -q tests

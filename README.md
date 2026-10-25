@@ -38,7 +38,7 @@ Initial model download requires internet access; afterwards the inference itself
 6. Optionally select a binary sensor that switches **on** when a vehicle is detected.
 7. Enter known registrations and adjust capture/recognition settings as needed.
 
-The integration supports one entry per camera and can be configured multiple times for different cameras. Without a detection sensor, initiate scans manually through the `fast_alpr.scan` action or an automation of your choice.
+The integration supports one entry per camera and can be configured multiple times for different cameras. A camera is fixed to its entry once configured; to use a different camera, remove that entry and add another. Without a detection sensor, initiate scans manually through the `fast_alpr.scan` action or an automation of your choice.
 
 ### Known registrations: spaces are supported
 
@@ -75,7 +75,7 @@ This also allows custom triggers (button press, motion event, time schedule, etc
 
 | Option | Default | Description |
 | --- | --- | --- |
-| Camera | Required | Camera entity selected from Home Assistant's dropdown |
+| Camera | Required at setup | Camera entity selected from Home Assistant's dropdown; fixed per entry |
 | Vehicle detection binary sensor | Optional | State changing to `on` triggers a scan |
 | Known plates | Required | Newline-separated registration-to-vehicle mappings |
 | Match event | `fast_alpr_match` | Home Assistant event emitted for a confirmed match |

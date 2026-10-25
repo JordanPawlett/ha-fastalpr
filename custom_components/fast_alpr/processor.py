@@ -105,3 +105,37 @@ def match_frames(
         for plate, scores in observations.items()
         if len(scores) >= min_matching_frames
     ]
+
+
+class PlateConsensus:
+    """Progressive per-frame voting; duplicate OCR results count only once."""
+
+    def __init__(self, known: dict[str, str], confidence: float, frames: int):
+        self.known = known
+        self.min_confidence = confidence
+        self.min_frames = frames
+        self.observations: dict[str, list[float]] = defaultdict(list)
+        self.seen_frames: set[int] = set()
+
+    def add(self, frame_index: int, detections: list[dict]) -> list[Match]:
+        if frame_index in self.seen_frames:
+            return []
+        self.seen_frames.add(frame_index)
+        accepted: dict[str, float] = {}
+        for detection in detections:
+            plate = normalize_plate(detection.get("plate", ""))
+            if plate not in self.known:
+                continue
+            score = float(detection.get("confidence", 0))
+            if score >= self.min_confidence:
+                accepted[plate] = max(accepted.get(plate, 0.0), score)
+        matches = []
+        for plate, score in accepted.items():
+            scores = self.observations[plate]
+            scores.append(score)
+            if len(scores) == self.min_frames:
+                matches.append(Match(
+                    plate=plate, vehicle=self.known[plate],
+                    confidence=max(scores), matching_frames=len(scores),
+                ))
+        return matches

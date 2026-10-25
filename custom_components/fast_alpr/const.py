@@ -5,6 +5,8 @@ DEFAULT_MATCH_EVENT = "fast_alpr_match"
 DEFAULT_MODEL = "yolo-v9-t-384-license-plate-end2end"
 DEFAULT_OCR = "cct-s-v2-global-model"
 
+CONF_BACKEND_URL = "backend_url"
+DEFAULT_BACKEND_URL = "http://local-fastalpr-backend:8099"
 CONF_CAMERA = "camera"
 CONF_DETECTION_ENTITY = "detection_entity"
 CONF_KNOWN_PLATES = "known_plates"

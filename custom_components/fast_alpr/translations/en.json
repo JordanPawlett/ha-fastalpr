@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Configure FastALPR",
-        "description": "Select a camera and optional vehicle-detection sensor. FastALPR inference runs in the separate FastALPR Inference app. Enter its internal URL, such as http://<app-slug-with-hyphens>:8099. Known plates remain private in Home Assistant.",
+        "description": "Select a camera and optional vehicle-detection sensor. FastALPR inference runs in the separate FastALPR Inference app. Enter its internal URL, such as http://APP-HOSTNAME:8099. Known plates remain private in Home Assistant.",
         "data": {
           "camera": "Camera",
           "detection_entity": "Vehicle detection binary sensor (optional)",

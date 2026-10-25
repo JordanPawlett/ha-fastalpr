@@ -87,9 +87,43 @@ FastALPR emits a match immediately when enough frames agree; there is no wait fo
 
 The integration cannot measure when a vehicle *first enters the physical frame* before the camera recognises it. Overall arrival-to-event latency also depends on camera detection delay, image freshness/quality and inference speed. The target is **not guaranteed**; measure real arrivals and preferably review the p95 latency. Preloading models avoids cold-start inference delays after a normal app boot.
 
+## Home Assistant automation triggers
+
+FastALPR provides a **native event entity** per configured camera. You can
+build automations without entering raw event names or YAML:
+
+1. In **Settings → Automations & scenes**, create or edit an automation.
+2. In **When**, choose **Add trigger → By target → Entity**, and select the
+   **FastALPR — Known vehicle recognised** event entity associated with your camera.
+3. Choose **Event received**, then **Known vehicle recognised** in the event-type selector.
+4. Add the action you want (for example, a notification). Review recognition accuracy before
+   using it for any physical access control.
+
+For those using YAML, the equivalent is:
+
+```yaml
+triggers:
+  - trigger: event.received
+    target:
+      entity_id: event.example_fastalpr_known_vehicle_recognised
+    options:
+      event_type:
+        - known_vehicle_recognised
+```
+
+Replace the example entity ID with the actual event entity from Home Assistant.
+Recognition metadata (vehicle, registration, confidence, agreeing-frame count,
+camera, capture ID and latency) is exposed as attributes on the event entity's
+new state. In an automation use e.g. `{{ trigger.to_state.attributes.vehicle }}`.
+
+The native event entity and the original `fast_alpr_match` bus event are
+emitted from the **same confirmed recognition**, after known-plate matching,
+confidence checks and the repeat-match cooldown. Existing automations using
+the raw event keep working unchanged.
+
 ## Home Assistant entities and event
 
-The integration exposes **Known vehicle detected** and **Inference engine ready** (binary) as well as **Last recognised vehicle**, **Last recognised plate**, **Processed batches**, **Last error**, and the latency diagnostic sensors.
+The integration exposes a native **Known vehicle recognised** event entity, plus **Known vehicle detected** and **Inference engine ready** (binary), as well as **Last recognised vehicle**, **Last recognised plate**, **Processed batches**, **Last error**, and the latency diagnostic sensors.
 
 When a plate passes confidence and consensus, the integration publishes `fast_alpr_match` with `vehicle`, `plate`, `camera`, `confidence`, `matching_frames`, `capture_id`, `timestamp`, `trigger_to_match_ms`, `capture_ms`, and `inference_ms`.
 

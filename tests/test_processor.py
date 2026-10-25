@@ -84,3 +84,27 @@ def test_backend_results_match_without_sharing_private_allowlist():
     assert matched[0].vehicle == "Known vehicle"
     assert matched[0].matching_frames == 2
     assert matched[0].confidence == .95
+
+
+def test_progressive_early_exit_after_second_agreeing_frame():
+    counter = processor.PlateConsensus({"ZZ99ZZZ": "Example"}, .85, 2)
+    assert counter.add(0, [{"plate": "ZZ99 ZZZ", "confidence": .94}]) == []
+    confirmed = counter.add(1, [{"plate": "ZZ99ZZZ", "confidence": .91}])
+    assert len(confirmed) == 1
+    assert confirmed[0].vehicle == "Example"
+    assert confirmed[0].matching_frames == 2
+
+
+def test_duplicate_ocr_and_replayed_frame_never_satisfy_consensus():
+    counter = processor.PlateConsensus({"ZZ99ZZZ": "Example"}, .85, 2)
+    duplicates = [{"plate": "ZZ99ZZZ", "confidence": .99}] * 3
+    assert counter.add(0, duplicates) == []
+    assert counter.add(0, duplicates) == []
+    assert counter.add(1, [{"plate": "ZZ99ZZZ", "confidence": .80}]) == []
+    assert len(counter.add(2, [{"plate": "ZZ99ZZZ", "confidence": .86}])) == 1
+
+
+def test_progressive_consensus_does_not_match_unlisted_plates():
+    counter = processor.PlateConsensus({"ZZ99ZZZ": "Example"}, .85, 2)
+    for i in range(4):
+        assert counter.add(i, [{"plate": "AA00AAA", "confidence": .99}]) == []

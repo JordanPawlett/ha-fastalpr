@@ -1,13 +1,18 @@
 """Local ALPR from any Home Assistant camera supporting still images."""
 from __future__ import annotations
 
+from datetime import timedelta
+
 import voluptuous as vol
 from homeassistant.const import Platform
 from homeassistant.core import callback
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 
-from .const import CONF_CAMERA, CONF_DETECTION_ENTITY, DOMAIN
+from .const import (
+    CONF_BACKEND_URL, CONF_CAMERA, CONF_DETECTION_ENTITY,
+    CONF_TRIGGER_MODE, DOMAIN, TRIGGER_AUTOMATIC,
+)
 from .runtime import FastAlprRuntime
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -17,7 +22,8 @@ SCAN_SERVICE = "scan"
 
 
 async def async_setup(hass, config):
-    """Register a manual scan action for users without a vehicle sensor."""
+    """Register manual scans and cache Supervisor backend discovery."""
+    hass.data.setdefault(DOMAIN, {})
     async def handle_scan(call):
         camera = call.data[CONF_CAMERA]
         for entry in hass.config_entries.async_entries(DOMAIN):
@@ -41,7 +47,14 @@ async def async_setup_entry(hass, entry):
     entry.runtime_data = runtime
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    detector = runtime.options.get(CONF_DETECTION_ENTITY)
+    entry.async_on_unload(async_track_time_interval(
+        hass, lambda now: hass.async_create_task(runtime.refresh_backend_status()),
+        timedelta(seconds=30),
+    ))
+    hass.async_create_task(runtime.refresh_backend_status())
+
+    detector = (runtime.options.get(CONF_DETECTION_ENTITY)
+                if runtime.options.get(CONF_TRIGGER_MODE, TRIGGER_AUTOMATIC) == TRIGGER_AUTOMATIC else None)
     if detector:
         @callback
         def on_vehicle_detection(event):

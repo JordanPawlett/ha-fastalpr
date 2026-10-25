@@ -104,7 +104,38 @@ def test_duplicate_ocr_and_replayed_frame_never_satisfy_consensus():
     assert len(counter.add(2, [{"plate": "ZZ99ZZZ", "confidence": .86}])) == 1
 
 
-def test_progressive_consensus_does_not_match_unlisted_plates():
+def test_progressive_consensus_classifies_unknown_with_uppercase():
     counter = processor.PlateConsensus({"ZZ99ZZZ": "Example"}, .85, 2)
-    for i in range(4):
-        assert counter.add(i, [{"plate": "AA00AAA", "confidence": .99}]) == []
+    assert counter.add(0, [{"plate": "unknown2", "confidence": .94}]) == []
+    matches = counter.add(1, [{"plate": "UN KNOWN2", "confidence": .96}])
+    assert len(matches) == 1
+    assert matches[0].plate == "UNKNOWN2"
+    assert matches[0].vehicle == ""
+    assert matches[0].matching_frames == 2
+
+
+def test_unknown_requires_confidence_and_distinct_frames():
+    counter = processor.PlateConsensus({"ZZ99ZZZ": "Example"}, .85, 2)
+    assert counter.add(0, [
+        {"plate": "unknown", "confidence": .70},
+        {"plate": "!", "confidence": 1},
+    ]) == []
+    assert counter.add(1, [{"plate": "UNKNOWN", "confidence": .95}]) == []
+    assert counter.add(1, [{"plate": "UNKNOWN", "confidence": .99}]) == []
+    assert len(counter.add(2, [{"plate": "uNknown", "confidence": .89}])) == 1
+
+
+def test_known_and_unknown_do_not_change_each_others_classification():
+    counter = processor.PlateConsensus({"ZZ99ZZZ": "Example"}, .85, 2)
+    assert counter.add(0, [
+        {"plate": "ZZ99ZZZ", "confidence": .95},
+        {"plate": "UNKNOWN2", "confidence": .95},
+    ]) == []
+    matches = counter.add(1, [
+        {"plate": "ZZ99ZZZ", "confidence": .95},
+        {"plate": "unknown2", "confidence": .95},
+    ])
+    assert {match.plate: match.vehicle for match in matches} == {
+        "ZZ99ZZZ": "Example",
+        "UNKNOWN2": "",
+    }

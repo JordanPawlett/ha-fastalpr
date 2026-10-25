@@ -11,7 +11,7 @@ from homeassistant.helpers.event import async_track_state_change_event, async_tr
 
 from .const import (
     CONF_BACKEND_URL, CONF_CAMERA, CONF_DETECTION_ENTITY,
-    CONF_TRIGGER_MODE, DOMAIN, TRIGGER_AUTOMATIC,
+    CONF_TRIGGER_MODE, DOMAIN, TRIGGER_AUTOMATIC, TRIGGER_MANUAL,
 )
 from .runtime import FastAlprRuntime
 
@@ -39,6 +39,20 @@ async def async_setup(hass, config):
         DOMAIN, SCAN_SERVICE, handle_scan,
         schema=vol.Schema({vol.Required(CONF_CAMERA): cv.entity_id}),
     )
+    return True
+
+
+async def async_migrate_entry(hass, entry):
+    """Migrate older config entries without changing user settings."""
+    if entry.version > 3:
+        return False
+    if entry.version < 3:
+        data = dict(entry.data)
+        data.setdefault(
+            CONF_TRIGGER_MODE,
+            TRIGGER_AUTOMATIC if data.get(CONF_DETECTION_ENTITY) else TRIGGER_MANUAL,
+        )
+        hass.config_entries.async_update_entry(entry, data=data, version=3)
     return True
 
 

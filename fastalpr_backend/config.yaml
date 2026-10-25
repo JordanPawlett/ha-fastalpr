@@ -1,0 +1,17 @@
+name: FastALPR Inference
+version: "0.1.0"
+slug: fastalpr_backend
+description: Local CPU licence plate recognition backend for Home Assistant
+url: https://github.com/JordanPawlett/ha-fastalpr
+arch:
+  - amd64
+init: true
+startup: application
+boot: auto
+watchdog: http://[HOST]:[PORT:8099]/health
+stage: experimental
+map:
+  - type: media
+    read_only: true
+options: {}
+schema: {}

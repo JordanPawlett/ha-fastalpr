@@ -1,6 +1,7 @@
 """Constants for FastALPR."""
 DOMAIN = "fast_alpr"
 EVENT_MATCH = "fast_alpr_match"
+EVENT_UNKNOWN_MATCH = "fast_alpr_unknown_match"
 EVENT_SCAN = "fast_alpr_scan"
 
 CONF_BACKEND_URL = "backend_url"

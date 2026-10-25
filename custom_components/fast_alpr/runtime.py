@@ -213,7 +213,11 @@ class FastAlprRuntime:
                     pending.discard(job)
                     index, detections, spent = job.result()
                     accumulated_inference_ms += spent
-                    # If two different plates reach consensus together, prefer\n                    # a configured known plate to preserve prior behaviour.\n                    matches = consensus.add(index, detections)\n                    for match in sorted(matches, key=lambda candidate: not bool(candidate.vehicle)):
+                    # Prefer known registrations when several plates agree.
+                    matches = consensus.add(index, detections)
+                    for match in sorted(
+                        matches, key=lambda candidate: not bool(candidate.vehicle)
+                    ):
                         if self._publish(
                             match, capture_id, options, started,
                             accumulated_capture_ms, accumulated_inference_ms,

@@ -43,6 +43,7 @@ class FastAlprRuntime:
         self.last_confidence: float | None = None
         self.last_matching_frames: int | None = None
         self.last_latency_ms: int | None = None
+        self.last_scan_ms: int | None = None
         self.last_capture_ms: int | None = None
         self.last_inference_ms: int | None = None
         self.detected = False
@@ -55,7 +56,10 @@ class FastAlprRuntime:
         # Prefer the running, discovered Supervisor app, without exposing its URL
         # to users; legacy entries retain their existing URL as a safe fallback.
         discovered = self.hass.data.get("fast_alpr", {}).get(CONF_BACKEND_URL)
-        if discovered:
+        override = self.entry.options.get(CONF_BACKEND_URL)
+        if override:
+            value[CONF_BACKEND_URL] = override
+        elif discovered:
             value[CONF_BACKEND_URL] = discovered
         return value
 
@@ -97,6 +101,7 @@ class FastAlprRuntime:
         now = time.monotonic()
         if now - self.last_sent.get(match.plate, float("-inf")) < int(options[CONF_COOLDOWN_SECONDS]):
             return False
+        self.last_error = None
         self.last_sent[match.plate] = now
         self.last_vehicle = match.vehicle
         self.last_plate = match.plate
@@ -146,7 +151,6 @@ class FastAlprRuntime:
         pending: set[asyncio.Task] = set()
         accumulated_capture_ms = 0
         accumulated_inference_ms = 0
-        recognised = False
         try:
             known = parse_known_plates(options[CONF_KNOWN_PLATES])
             backend = options.get(CONF_BACKEND_URL)
@@ -159,7 +163,7 @@ class FastAlprRuntime:
             endpoint = backend.rstrip("/") + "/recognize"
 
             async def consume(wait: float | None) -> bool:
-                nonlocal accumulated_inference_ms, recognised
+                nonlocal accumulated_inference_ms
                 if not pending:
                     if wait is not None and wait > 0:
                         await asyncio.sleep(wait)
@@ -177,7 +181,6 @@ class FastAlprRuntime:
                             match, capture_id, options, started,
                             accumulated_capture_ms, accumulated_inference_ms,
                         ):
-                            recognised = True
                             return True
                 return False
 
@@ -222,6 +225,9 @@ class FastAlprRuntime:
                 await asyncio.gather(*pending, return_exceptions=True)
             # Completed scans count even when no known registration was present.
             self.last_processed = capture_id
+            self.last_scan_ms = round((time.monotonic() - started) * 1000)
+            self.last_capture_ms = accumulated_capture_ms
+            self.last_inference_ms = accumulated_inference_ms
             self.processed_batches += 1
             self.notify()
 

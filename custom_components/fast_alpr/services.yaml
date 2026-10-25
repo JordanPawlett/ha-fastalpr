@@ -1,0 +1,12 @@
+scan:
+  name: Scan camera
+  description: Capture several still images from a configured camera and run local FastALPR recognition.
+  fields:
+    camera:
+      name: Camera
+      description: Camera already configured in the FastALPR integration.
+      required: true
+      example: camera.example_camera
+      selector:
+        entity:
+          domain: camera

@@ -1,0 +1,13 @@
+__pycache__/
+.pytest_cache/
+*.pyc
+.venv/
+.env
+*.jpg
+*.jpeg
+*.png
+*.mp4
+*.sqlite3
+*.db
+.secrets/
+!custom_components/fast_alpr/brand/icon.png

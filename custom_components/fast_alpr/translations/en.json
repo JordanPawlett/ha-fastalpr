@@ -1,0 +1,59 @@
+{
+  "title": "FastALPR",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configure FastALPR",
+        "description": "Choose a camera that provides still images and optionally choose a binary sensor that becomes active for vehicles. Enter known registrations as REGISTRATION=Vehicle name (spaces in registrations are accepted).",
+        "data": {
+          "camera": "Camera",
+          "detection_entity": "Vehicle detection binary sensor (optional)",
+          "known_plates": "Known registrations (REGISTRATION=Vehicle name)",
+          "match_event": "Match event type",
+          "frames": "Images per scan",
+          "interval_ms": "Milliseconds between images",
+          "min_matching_frames": "Minimum agreeing images",
+          "min_confidence": "Minimum OCR confidence (0.0–1.0)",
+          "cooldown_seconds": "Repeat detection cooldown (seconds)",
+          "signal_seconds": "Detection signal duration (seconds)"
+        }
+      }
+    },
+    "error": {
+      "invalid_camera": "Select an available camera entity",
+      "invalid_detector": "Select a valid binary sensor entity",
+      "invalid_event": "Event type must contain lowercase letters, digits and underscores",
+      "invalid_frames": "Minimum agreeing images cannot exceed images per scan",
+      "invalid_plates": "Enter one REGISTRATION=Vehicle name per line; spaces in registrations are accepted"
+    },
+    "abort": {
+      "already_configured": "This camera is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "FastALPR options",
+        "data": {
+          "camera": "Camera",
+          "detection_entity": "Vehicle detection binary sensor (optional)",
+          "known_plates": "Known registrations (REGISTRATION=Vehicle name)",
+          "match_event": "Match event type",
+          "frames": "Images per scan",
+          "interval_ms": "Milliseconds between images",
+          "min_matching_frames": "Minimum agreeing images",
+          "min_confidence": "Minimum OCR confidence (0.0–1.0)",
+          "cooldown_seconds": "Repeat detection cooldown (seconds)",
+          "signal_seconds": "Detection signal duration (seconds)"
+        }
+      }
+    },
+    "error": {
+      "invalid_camera": "Select an available camera entity",
+      "invalid_detector": "Select a valid binary sensor entity",
+      "invalid_event": "Event type must contain lowercase letters, digits and underscores",
+      "invalid_frames": "Minimum agreeing images cannot exceed images per scan",
+      "invalid_plates": "Enter one REGISTRATION=Vehicle name per line; spaces in registrations are accepted"
+    }
+  }
+}

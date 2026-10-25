@@ -100,8 +100,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not 1 <= length <= MAX_IMAGE_BYTES:
                     raise ValueError("Image size outside supported range")
                 data = self.rfile.read(length)
-                jpeg = data.startswith(b"\\xff\\xd8\\xff")
-                png = data.startswith(b"\\x89PNG\\r\\n\\x1a\\n")
+                jpeg = data.startswith(b"\xff\xd8\xff")
+                png = data.startswith(b"\x89PNG\r\n\x1a\n")
                 if not (jpeg or png):
                     raise ValueError("Expected a JPEG or PNG image")
                 with tempfile.TemporaryDirectory(prefix="alpr_") as root:

@@ -75,3 +75,33 @@ def read_batch(model: Any, paths: list[Path], known: dict[str, str],
         for plate, scores in observations.items()
         if len(scores) >= min_matching_frames
     ]
+
+
+def match_frames(
+    frames: list[list[dict]],
+    known: dict[str, str],
+    min_confidence: float,
+    min_matching_frames: int,
+) -> list[Match]:
+    """Match raw recogniser results across independent frames.
+
+    The private known-registration list never leaves Home Assistant Core.
+    """
+    observations: dict[str, list[float]] = defaultdict(list)
+    for detections in frames:
+        per_frame: dict[str, float] = {}
+        for detection in detections:
+            plate = normalize_plate(detection.get("plate", ""))
+            if plate not in known:
+                continue
+            confidence = float(detection.get("confidence", 0))
+            if confidence >= min_confidence:
+                per_frame[plate] = max(confidence, per_frame.get(plate, 0.0))
+        for plate, confidence in per_frame.items():
+            observations[plate].append(confidence)
+    return [
+        Match(plate=plate, vehicle=known[plate], confidence=max(scores),
+              matching_frames=len(scores))
+        for plate, scores in observations.items()
+        if len(scores) >= min_matching_frames
+    ]

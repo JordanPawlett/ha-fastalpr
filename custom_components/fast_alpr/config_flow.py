@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import urlparse
 
 import voluptuous as vol
 from homeassistant import config_entries
@@ -9,6 +10,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector
 
 from .const import (
+    CONF_BACKEND_URL, DEFAULT_BACKEND_URL,
     CONF_CAMERA, CONF_COOLDOWN_SECONDS, CONF_DETECTION_ENTITY, CONF_FRAMES,
     CONF_INTERVAL_MS, CONF_KNOWN_PLATES, CONF_MATCH_EVENT, CONF_MIN_CONFIDENCE,
     CONF_MIN_MATCHING_FRAMES, CONF_SIGNAL_SECONDS, DEFAULT_COOLDOWN_SECONDS,
@@ -31,6 +33,7 @@ def schema(options: dict | None = None, *, include_camera: bool = True) -> vol.S
         description={"suggested_value": o.get(CONF_DETECTION_ENTITY, "")},
     )
     fields = {
+        vol.Required(CONF_BACKEND_URL, default=o.get(CONF_BACKEND_URL, DEFAULT_BACKEND_URL)): str,
         detector_key: selector.EntitySelector(selector.EntitySelectorConfig(domain="binary_sensor")),
         vol.Required(CONF_KNOWN_PLATES, default=o.get(CONF_KNOWN_PLATES, "")):
             selector.TextSelector(selector.TextSelectorConfig(multiline=True)),
@@ -54,6 +57,9 @@ def schema(options: dict | None = None, *, include_camera: bool = True) -> vol.S
 
 
 def validate(hass, values: dict) -> dict:
+    url = urlparse(values[CONF_BACKEND_URL])
+    if url.scheme not in ("http", "https") or not url.hostname or url.username or url.password or url.path not in ("", "/") or url.query or url.fragment:
+        raise ValueError("invalid_backend")
     camera = values[CONF_CAMERA]
     if not isinstance(camera, str) or not camera.startswith("camera.") or hass.states.get(camera) is None:
         raise ValueError("invalid_camera")
@@ -76,6 +82,7 @@ def validate(hass, values: dict) -> dict:
 def flow_error(exc: ValueError) -> str:
     error = str(exc)
     return error if error in {
+        "invalid_backend",
         "invalid_camera", "invalid_detector", "invalid_event",
         "invalid_frames", "invalid_plates"
     } else "invalid_plates"

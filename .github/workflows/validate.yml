@@ -37,6 +37,12 @@ jobs:
           )
           print('FastALPR models initialised with CPU ONNX')
           PY
+  backend-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build supervised Debian inference app
+        run: docker build -t fastalpr-inference-test ./fastalpr_backend
   unit-tests:
     runs-on: ubuntu-latest
     steps:
@@ -45,5 +51,5 @@ jobs:
         with:
           python-version: '3.13'
       - run: python -m pip install pytest
-      - run: python -m compileall -q custom_components
+      - run: python -m compileall -q custom_components fastalpr_backend
       - run: python -m pytest -q tests

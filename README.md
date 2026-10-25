@@ -2,9 +2,9 @@
 
 [![Validate](https://github.com/JordanPawlett/ha-fastalpr/actions/workflows/validate.yml/badge.svg)](https://github.com/JordanPawlett/ha-fastalpr/actions/workflows/validate.yml)
 
-Local, on-demand automatic licence plate recognition using [FastALPR](https://github.com/ankandrew/fast-alpr). **Choose a Home Assistant camera directly from a dropdown**, optionally select a vehicle-detection binary sensor, and list the registrations you want to recognise. No NVR, MQTT, separate container, cloud recognition API, or snapshot-collection automation required.
+Local, on-demand automatic licence plate recognition using [FastALPR](https://github.com/ankandrew/fast-alpr). **Choose a Home Assistant camera directly from a dropdown**, optionally select a vehicle-detection binary sensor, and list the registrations you want to recognise. No NVR, MQTT, cloud recognition API, or snapshot-collection automation required. The ONNX engine runs in a lightweight Home Assistant Supervisor app for process isolation and Alpine Linux compatibility.
 
-> **Early preview.** Native ONNX dependency installation and real-camera inference have not yet been validated on every Home Assistant platform. FastALPR runs inside Home Assistant Core: a native library fault can affect Core. Do not use ALPR as the sole authentication mechanism for a lock, barrier, or other access control.
+> **Early preview.** Home Assistant Core uses Alpine Linux, which cannot install the current ONNX Runtime wheels. The separate **FastALPR Inference** app runs the model on Debian/glibc. The custom integration itself has no ONNX dependencies. Do not use ALPR as the sole authentication for locks or access controls.
 
 ## How it works
 
@@ -12,10 +12,10 @@ Local, on-demand automatic licence plate recognition using [FastALPR](https://gi
 Vehicle binary sensor switches on (optional)
                     │
                     ▼
-FastALPR captures stills from your chosen camera
+HACS integration captures stills from your selected camera
                     │
                     ▼
-Pretrained local detection + OCR (CPU, ONNX)
+Supervisor app performs local OCR (CPU, ONNX)
                     │
                     ▼
 Normalised exact match against your configured plate list
@@ -24,21 +24,25 @@ Normalised exact match against your configured plate list
 HA binary sensor + last vehicle/plate sensors + fast_alpr_match event
 ```
 
-When a detection occurs, FastALPR captures five stills by default, spaces them 750 ms apart, and requires agreement across at least two different images. Capture happens through Home Assistant's camera API, without specifying a snapshot directory or writing a persistent image dataset. Temporary inference files are deleted after processing. No constant video stream or directory watcher is needed. Cameras must support still-image retrieval; some stream-only cameras may need separate snapshot support.
+When a detection occurs, FastALPR captures five stills by default, spaces them 750 ms apart, and requires agreement across at least two different images. Capture happens through Home Assistant's camera API, without specifying a snapshot directory or writing a persistent image dataset. Images are sent only over Home Assistant's internal network to the local inference app, which uses temporary files deleted after processing. No constant video stream or directory watcher is needed. Cameras must support still-image retrieval; some stream-only cameras may need separate snapshot support.
 
 Initial model download requires internet access; afterwards the inference itself runs locally.
 
 ## Installation
 
-1. Install [HACS](https://www.hacs.xyz/) if needed.
-2. Add `https://github.com/JordanPawlett/ha-fastalpr` in **HACS → Custom repositories**, category **Integration**.
-3. Install **FastALPR**, then restart Home Assistant.
-4. Under **Settings → Devices & services → Add integration**, choose **FastALPR**.
-5. Select a camera from the entity dropdown; prefer its highest-resolution still-image source.
-6. Optionally select a binary sensor that switches **on** when a vehicle is detected.
-7. Enter known registrations and adjust capture/recognition settings as needed.
+**Home Assistant OS or Supervised is required to run the companion app.** The app uses Debian/glibc, since ONNX Runtime does not provide the necessary Alpine/musllinux wheels for Home Assistant Core.
 
-The integration supports one entry per camera and can be configured multiple times for different cameras. A camera is fixed to its entry once configured; to use a different camera, remove that entry and add another. Without a detection sensor, initiate scans manually through the `fast_alpr.scan` action or an automation of your choice.
+1. Under **Settings → Apps → App store → ⋮ → Repositories**, add `https://github.com/JordanPawlett/ha-fastalpr`.
+2. Install **FastALPR Inference**. Enable **Start on boot** and **Watchdog**, then start the app. The first inference downloads pretrained model files.
+3. Note the app's *internal hostname*: the installed app slug with underscores replaced by hyphens (usually `<repository-prefix>-fastalpr-backend`). The Supervisor app list or app details shows the slug.
+4. In HACS, add `https://github.com/JordanPawlett/ha-fastalpr` as an **Integration** custom repository, install **FastALPR**, and restart Home Assistant.
+5. Under **Settings → Devices & services → Add integration → FastALPR**, select a camera and provide the inference URL: `http://<internal-app-hostname>:8099`.
+6. Optionally select a binary sensor that switches **on** when a vehicle is detected.
+7. Enter known registrations and adjust recognition settings.
+
+The integration supports one entry per camera and can be configured multiple times for different cameras. The camera is fixed to its entry once configured; to change it, remove the entry and add another. Without a detection sensor, use the `fast_alpr.scan` action.
+
+**Privacy and network:** the app deliberately exposes no port on your LAN or the internet. The configured known-registration list stays in Home Assistant Core; the app sees camera images and returns OCR text, but never receives the registration allowlist.
 
 ### Known registrations: spaces are supported
 
@@ -75,7 +79,7 @@ This also allows custom triggers (button press, motion event, time schedule, etc
 
 | Option | Default | Description |
 | --- | --- | --- |
-| Camera | Required at setup | Camera entity selected from Home Assistant's dropdown; fixed per entry |
+| Inference app URL | Required | Internal Supervisor hostname and port, e.g. \`http://<app-id>:8099\` |\n| Camera | Required at setup | Camera entity selected from Home Assistant's dropdown; fixed per entry |
 | Vehicle detection binary sensor | Optional | State changing to `on` triggers a scan |
 | Known plates | Required | Newline-separated registration-to-vehicle mappings |
 | Match event | `fast_alpr_match` | Home Assistant event emitted for a confirmed match |
@@ -86,7 +90,7 @@ This also allows custom triggers (button press, motion event, time schedule, etc
 | Repeat detection cooldown | 60 seconds | Suppression interval per registration |
 | Signal duration | 30 seconds | Time the recognition binary sensor remains on |
 
-Model execution is scheduled in Home Assistant's executor to avoid blocking the event loop. The integration has diagnostic sensors for processed scans and the last error; no independent process watchdog is available because it runs within Core.
+FastALPR model execution is isolated in the Supervisor app and does not block Home Assistant Core's event loop. Supervisor can restart the app if its HTTP liveness check stops responding. The integration has diagnostic sensors for processed scans and the last error.
 
 ## Home Assistant output
 
@@ -160,18 +164,18 @@ The optional sample collector can run alongside FastALPR, although both will req
 - Ensure the camera has a sharp view of registration plates. Glare, distance, angle and motion blur can defeat any OCR engine.
 - If no vehicle-detection binary sensor is available, use a manual/custom automation trigger.
 - Check the **Last error** sensor and HA logs when inference fails.
-- Native ONNX dependencies must be compatible with your Home Assistant Core Python/platform; this remains to be validated on a real installation.
+- Home Assistant Core cannot install ONNX Runtime's current wheels on Alpine/musllinux. Install the separate **FastALPR Inference** app; never attempt to force native ONNX packages into Core.\n- The initial model download requires internet access from the inference app, but recognition requests are local.\n- The app's internal address may depend on the repository slug. Use the actual installed app ID and replace underscores with hyphens.
 - Recorded registrations are personal information. Avoid publishing screenshots, configuration dumps, machine addresses or actual registrations when reporting issues.
 - Restarting Home Assistant resets in-memory cooldown and diagnostics; no automatic sample-image retention or upload occurs.
 
 ## Development
 
 ```sh
-python -m compileall -q custom_components
+python -m compileall -q custom_components fastalpr_backend
 python -m pytest -q tests
 ```
 
-GitHub Actions runs unit tests, HACS validation and Hassfest. Tests cover plate normalisation, duplicate registration detection, OCR confidence filtering and independent-image consensus. Live-camera and ONNX model tests are still required.
+GitHub Actions runs unit tests, HACS validation, Hassfest and Python model-loading smoke tests. Tests cover plate normalisation, duplicate registration detection, OCR confidence filtering and independent-image consensus. Live-camera and ONNX model tests are still required.
 
 ## Licence
 

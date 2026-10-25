@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Configure FastALPR",
-        "description": "Choose a camera that provides still images and optionally choose a binary sensor that becomes active for vehicles. Enter known registrations as REGISTRATION=Vehicle name (spaces in registrations are accepted).",
+        "description": "Select a camera and optional vehicle-detection sensor. FastALPR inference runs in the separate FastALPR Inference app. Enter its internal URL, such as http://APP-HOSTNAME:8099. Known plates remain private in Home Assistant.",
         "data": {
           "camera": "Camera",
           "detection_entity": "Vehicle detection binary sensor (optional)",
@@ -15,7 +15,8 @@
           "min_matching_frames": "Minimum agreeing images",
           "min_confidence": "Minimum OCR confidence (0.0–1.0)",
           "cooldown_seconds": "Repeat detection cooldown (seconds)",
-          "signal_seconds": "Detection signal duration (seconds)"
+          "signal_seconds": "Detection signal duration (seconds)",
+          "backend_url": "Inference app URL (Home Assistant internal network)"
         }
       }
     },
@@ -24,7 +25,8 @@
       "invalid_detector": "Select a valid binary sensor entity",
       "invalid_event": "Event type must contain lowercase letters, digits and underscores",
       "invalid_frames": "Minimum agreeing images cannot exceed images per scan",
-      "invalid_plates": "Enter one REGISTRATION=Vehicle name per line; spaces in registrations are accepted"
+      "invalid_plates": "Enter one REGISTRATION=Vehicle name per line; spaces in registrations are accepted",
+      "invalid_backend": "Use an HTTP or HTTPS URL with a host (no credentials or paths)"
     },
     "abort": {
       "already_configured": "This camera is already configured"
@@ -44,7 +46,8 @@
           "min_matching_frames": "Minimum agreeing images",
           "min_confidence": "Minimum OCR confidence (0.0–1.0)",
           "cooldown_seconds": "Repeat detection cooldown (seconds)",
-          "signal_seconds": "Detection signal duration (seconds)"
+          "signal_seconds": "Detection signal duration (seconds)",
+          "backend_url": "Inference app URL (Home Assistant internal network)"
         }
       }
     },
@@ -53,7 +56,8 @@
       "invalid_detector": "Select a valid binary sensor entity",
       "invalid_event": "Event type must contain lowercase letters, digits and underscores",
       "invalid_frames": "Minimum agreeing images cannot exceed images per scan",
-      "invalid_plates": "Enter one REGISTRATION=Vehicle name per line; spaces in registrations are accepted"
+      "invalid_plates": "Enter one REGISTRATION=Vehicle name per line; spaces in registrations are accepted",
+      "invalid_backend": "Use an HTTP or HTTPS URL with a host (no credentials or paths)"
     }
   }
 }

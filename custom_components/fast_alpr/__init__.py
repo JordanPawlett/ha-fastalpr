@@ -17,7 +17,7 @@ from .runtime import FastAlprRuntime
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
-PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
+PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.EVENT]
 SCAN_SERVICE = "scan"
 
 

@@ -151,6 +151,8 @@ class FastAlprRuntime:
             "inference_ms": inference_ms,
         }
         self.hass.bus.async_fire(EVENT_MATCH, event_data)
+        # Also update Home Assistant's native event entity for no-YAML automations.
+        async_dispatcher_send(self.hass, f"fast_alpr_match_{self.entry.entry_id}", event_data)
         # Preserve prior private notification automations without making
         # the custom event name a public configuration setting.
         legacy = options.get(CONF_MATCH_EVENT)

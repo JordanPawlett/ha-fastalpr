@@ -12,7 +12,7 @@ from homeassistant.helpers.service_info.hassio import HassioServiceInfo
 
 from .const import (
     CONF_BACKEND_URL, CONF_CAMERA, CONF_COOLDOWN_SECONDS,
-    CONF_DETECTION_ENTITY, CONF_FRAMES, CONF_INTERVAL_MS, CONF_KNOWN_PLATES,
+    CONF_DETECTION_ENTITY, CONF_FRAMES, CONF_INTERVAL_MS, CONF_KNOWN_PLATES, CONF_WATCHLIST_PLATES,
     CONF_MATCH_EVENT, CONF_MIN_CONFIDENCE, CONF_MIN_MATCHING_FRAMES,
     CONF_SIGNAL_SECONDS, CONF_TRIGGER_MODE, DEFAULT_COOLDOWN_SECONDS,
     DEFAULT_FRAMES, DEFAULT_INTERVAL_MS, DEFAULT_MIN_CONFIDENCE,
@@ -41,7 +41,7 @@ def _basic_schema(mode: str, existing: dict | None = None) -> vol.Schema:
     """Only the user-facing fields, in their visible order."""
     old = existing or {}
     camera_key = vol.Required(CONF_CAMERA, default=old[CONF_CAMERA]) if old.get(CONF_CAMERA) else vol.Required(CONF_CAMERA)
-    plates_key = vol.Required(CONF_KNOWN_PLATES, default=old.get(CONF_KNOWN_PLATES, ""))
+    plates_key = vol.Optional(CONF_KNOWN_PLATES, default=old.get(CONF_KNOWN_PLATES, ""))
     fields = {
         camera_key: selector.EntitySelector(selector.EntitySelectorConfig(domain="camera")),
     }
@@ -50,6 +50,7 @@ def _basic_schema(mode: str, existing: dict | None = None) -> vol.Schema:
                       if old.get(CONF_DETECTION_ENTITY) else vol.Required(CONF_DETECTION_ENTITY))
         fields[sensor_key] = selector.EntitySelector(selector.EntitySelectorConfig(domain="binary_sensor"))
     fields[plates_key] = selector.TextSelector(selector.TextSelectorConfig(multiline=True))
+    fields[vol.Optional(CONF_WATCHLIST_PLATES, default=old.get(CONF_WATCHLIST_PLATES, ""))] = selector.TextSelector(selector.TextSelectorConfig(multiline=True))
     return vol.Schema(fields)
 
 
@@ -80,8 +81,12 @@ def _validate_basic(hass, values: dict, mode: str) -> None:
         sensor = values.get(CONF_DETECTION_ENTITY)
         if not sensor or not sensor.startswith("binary_sensor.") or hass.states.get(sensor) is None:
             raise ValueError("invalid_detector")
-    if not parse_known_plates(values.get(CONF_KNOWN_PLATES, "")):
+    authorised = parse_known_plates(values.get(CONF_KNOWN_PLATES, ""))
+    watchlist = parse_known_plates(values.get(CONF_WATCHLIST_PLATES, ""))
+    if not authorised and not watchlist:
         raise ValueError("invalid_plates")
+    if authorised.keys() & watchlist.keys():
+        raise ValueError("plate_overlap")
 
 
 def _validate_advanced(values: dict) -> None:
@@ -134,7 +139,7 @@ class FastAlprConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     raise ValueError("backend_unavailable")
             except ValueError as exc:
                 errors["base"] = str(exc) if str(exc) in (
-                    "invalid_camera", "invalid_detector", "invalid_plates", "backend_unavailable"
+                    "invalid_camera", "invalid_detector", "invalid_plates", "plate_overlap", "plate_overlap", "backend_unavailable"
                 ) else "invalid_plates"
             else:
                 await self.async_set_unique_id(user_input[CONF_CAMERA])
@@ -142,6 +147,7 @@ class FastAlprConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 data = {
                     **user_input, CONF_TRIGGER_MODE: mode,
                     CONF_BACKEND_URL: backend,
+                    CONF_WATCHLIST_PLATES: user_input.get(CONF_WATCHLIST_PLATES, ""),
                     CONF_FRAMES: DEFAULT_FRAMES,
                     CONF_INTERVAL_MS: DEFAULT_INTERVAL_MS,
                     CONF_MIN_MATCHING_FRAMES: DEFAULT_MIN_MATCHING_FRAMES,
@@ -197,7 +203,8 @@ class FastAlprOptionsFlow(config_entries.OptionsFlow):
             else:
                 updates = {
                     CONF_TRIGGER_MODE: mode,
-                    CONF_KNOWN_PLATES: user_input[CONF_KNOWN_PLATES],
+                    CONF_KNOWN_PLATES: user_input.get(CONF_KNOWN_PLATES, ""),
+                    CONF_WATCHLIST_PLATES: user_input.get(CONF_WATCHLIST_PLATES, ""),
                     CONF_DETECTION_ENTITY: user_input.get(CONF_DETECTION_ENTITY, "") if mode == TRIGGER_AUTOMATIC else "",
                 }
                 return self.async_create_entry(title="", data={**self._config_entry.options, **updates})
@@ -207,7 +214,8 @@ class FastAlprOptionsFlow(config_entries.OptionsFlow):
             detector_key = (vol.Required(CONF_DETECTION_ENTITY, default=old[CONF_DETECTION_ENTITY])
                             if old.get(CONF_DETECTION_ENTITY) else vol.Required(CONF_DETECTION_ENTITY))
             fields[detector_key] = selector.EntitySelector(selector.EntitySelectorConfig(domain="binary_sensor"))
-        fields[vol.Required(CONF_KNOWN_PLATES, default=old.get(CONF_KNOWN_PLATES, ""))] = selector.TextSelector(selector.TextSelectorConfig(multiline=True))
+        fields[vol.Optional(CONF_KNOWN_PLATES, default=old.get(CONF_KNOWN_PLATES, ""))] = selector.TextSelector(selector.TextSelectorConfig(multiline=True))
+        fields[vol.Optional(CONF_WATCHLIST_PLATES, default=old.get(CONF_WATCHLIST_PLATES, ""))] = selector.TextSelector(selector.TextSelectorConfig(multiline=True))
         return self.async_show_form(step_id=mode, data_schema=vol.Schema(fields), errors=errors)
 
     async def async_step_advanced(self, user_input=None):

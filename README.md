@@ -89,7 +89,7 @@ The integration cannot measure when a vehicle *first enters the physical frame* 
 
 ## Home Assistant entities and event
 
-The integration exposes **Known vehicle detected** (binary), **Last recognised vehicle**, **Last recognised plate**, **Processed batches**, **Last error**, and the latency diagnostic sensors.
+The integration exposes **Known vehicle detected** and **Inference engine ready** (binary) as well as **Last recognised vehicle**, **Last recognised plate**, **Processed batches**, **Last error**, and the latency diagnostic sensors.
 
 When a plate passes confidence and consensus, the integration publishes `fast_alpr_match` with `vehicle`, `plate`, `camera`, `confidence`, `matching_frames`, `capture_id`, `timestamp`, `trigger_to_match_ms`, `capture_ms`, and `inference_ms`.
 

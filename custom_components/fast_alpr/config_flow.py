@@ -56,7 +56,7 @@ def _basic_schema(mode: str, existing: dict | None = None) -> vol.Schema:
 def _advanced_schema(current: dict) -> vol.Schema:
     """Separate, explicitly selected advanced options screen."""
     return vol.Schema({
-        vol.Optional(CONF_BACKEND_URL, default=current.get(CONF_BACKEND_URL, "")): str,
+        vol.Optional(CONF_BACKEND_URL, description={"suggested_value": current.get(CONF_BACKEND_URL, "")}): str,
         vol.Required(CONF_FRAMES, default=current.get(CONF_FRAMES, DEFAULT_FRAMES)):
             vol.All(vol.Coerce(int), vol.Range(min=2, max=12)),
         vol.Required(CONF_INTERVAL_MS, default=current.get(CONF_INTERVAL_MS, DEFAULT_INTERVAL_MS)):
@@ -219,7 +219,8 @@ class FastAlprOptionsFlow(config_entries.OptionsFlow):
                 errors["base"] = str(exc) if str(exc) in ("invalid_frames", "invalid_backend") else "invalid_frames"
             else:
                 return self.async_create_entry(
-                    title="", data={**self._config_entry.options, **user_input}
+                    title="", data={**self._config_entry.options, **user_input,
+                                    CONF_BACKEND_URL: user_input.get(CONF_BACKEND_URL, "")}
                 )
         return self.async_show_form(
             step_id="advanced", data_schema=_advanced_schema(self.current), errors=errors

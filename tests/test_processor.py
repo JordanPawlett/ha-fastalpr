@@ -70,3 +70,17 @@ def test_low_confidence_is_rejected(tmp_path):
     frames = [tmp_path / "frame_01.jpg", tmp_path / "frame_02.jpg"]
     model = FakeModel({frame.name: [ocr("ZZ99ZZZ", .7)] for frame in frames})
     assert processor.read_batch(model, frames, {"ZZ99ZZZ": "Car"}, .75, 2) == []
+
+
+def test_backend_results_match_without_sharing_private_allowlist():
+    frames = [
+        [{"plate": "ZZ99 ZZZ", "confidence": 0.92},
+         {"plate": "ZZ99ZZZ", "confidence": 0.95}],
+        [{"plate": "zz99zzz", "confidence": 0.83}],
+        [{"plate": "AA00AAA", "confidence": 0.98}],
+    ]
+    matched = processor.match_frames(frames, {"ZZ99ZZZ": "Known vehicle"}, .75, 2)
+    assert len(matched) == 1
+    assert matched[0].vehicle == "Known vehicle"
+    assert matched[0].matching_frames == 2
+    assert matched[0].confidence == .95

@@ -19,7 +19,7 @@ from .const import (
     CONF_BACKEND_URL, CONF_CAMERA, CONF_COOLDOWN_SECONDS, CONF_FRAMES,
     CONF_INTERVAL_MS, CONF_KNOWN_PLATES, CONF_MATCH_EVENT,
     CONF_MIN_CONFIDENCE, CONF_MIN_MATCHING_FRAMES, CONF_SIGNAL_SECONDS,
-    EVENT_MATCH,
+    EVENT_MATCH, EVENT_UNKNOWN_MATCH,
 )
 from .processor import PlateConsensus, parse_known_plates
 
@@ -118,46 +118,60 @@ class FastAlprRuntime:
 
     def _publish(self, match, capture_id: str, options: dict, started: float,
                  capture_ms: int, inference_ms: int):
-        """Publish a canonical event immediately after the required consensus."""
+        """Route validated plate to exactly ONE native event type.
+
+        Known registrations retain the legacy event + binary sensor behaviour.
+        Unknown registrations NEVER emit the known event or set known-vehicle
+        sensors. Both kinds share per-registration cooldowns.
+        """
         now = time.monotonic()
         if now - self.last_sent.get(match.plate, float("-inf")) < int(options[CONF_COOLDOWN_SECONDS]):
             return False
-        self.last_error = None
         self.last_sent[match.plate] = now
-        self.last_vehicle = match.vehicle
-        self.last_plate = match.plate
-        self.last_confidence = match.confidence
-        self.last_matching_frames = match.matching_frames
-        self.last_seen = datetime.now(timezone.utc)
-        self.detected = True
-        self.last_latency_ms = round((now - started) * 1000)
+        self.last_error = None
+        when = datetime.now(timezone.utc)
+        latency_ms = round((now - started) * 1000)
+        self.last_latency_ms = latency_ms
         self.last_capture_ms = capture_ms
         self.last_inference_ms = inference_ms
-        if self._cancel_reset:
-            self._cancel_reset()
-        self._cancel_reset = async_call_later(
-            self.hass, int(options[CONF_SIGNAL_SECONDS]), self.reset_detected
-        )
         event_data = {
-            "vehicle": match.vehicle,
-            "plate": match.plate,
+            "plate": match.plate,  # ALWAYS normalized to uppercase A-Z0-9.
             "confidence": round(match.confidence, 4),
             "matching_frames": match.matching_frames,
             "camera": options[CONF_CAMERA],
             "capture_id": capture_id,
-            "timestamp": self.last_seen.isoformat(),
-            "trigger_to_match_ms": self.last_latency_ms,
+            "timestamp": when.isoformat(),
+            "trigger_to_match_ms": latency_ms,
             "capture_ms": capture_ms,
             "inference_ms": inference_ms,
         }
-        self.hass.bus.async_fire(EVENT_MATCH, event_data)
-        # Also update Home Assistant's native event entity for no-YAML automations.
-        async_dispatcher_send(self.hass, f"fast_alpr_match_{self.entry.entry_id}", event_data)
-        # Preserve prior private notification automations without making
-        # the custom event name a public configuration setting.
-        legacy = options.get(CONF_MATCH_EVENT)
-        if legacy and legacy != EVENT_MATCH:
-            self.hass.bus.async_fire(legacy, event_data)
+        if match.vehicle:
+            self.last_vehicle = match.vehicle
+            self.last_plate = match.plate
+            self.last_confidence = match.confidence
+            self.last_matching_frames = match.matching_frames
+            self.last_seen = when
+            self.detected = True
+            if self._cancel_reset:
+                self._cancel_reset()
+            self._cancel_reset = async_call_later(
+                self.hass, int(options[CONF_SIGNAL_SECONDS]), self.reset_detected
+            )
+            event_data["vehicle"] = match.vehicle
+            self.hass.bus.async_fire(EVENT_MATCH, event_data)
+            async_dispatcher_send(
+                self.hass, f"fast_alpr_match_{self.entry.entry_id}", event_data
+            )
+            legacy = options.get(CONF_MATCH_EVENT)
+            if legacy and legacy != EVENT_MATCH:
+                self.hass.bus.async_fire(legacy, event_data)
+        else:
+            # This path must never send a known event, even for a watchlisted
+            # plate used by a downstream automation.
+            self.hass.bus.async_fire(EVENT_UNKNOWN_MATCH, event_data)
+            async_dispatcher_send(
+                self.hass, f"fast_alpr_unknown_match_{self.entry.entry_id}", event_data
+            )
         self.notify()
         return True
 
@@ -199,7 +213,7 @@ class FastAlprRuntime:
                     pending.discard(job)
                     index, detections, spent = job.result()
                     accumulated_inference_ms += spent
-                    for match in consensus.add(index, detections):
+                    # If two different plates reach consensus together, prefer\n                    # a configured known plate to preserve prior behaviour.\n                    matches = consensus.add(index, detections)\n                    for match in sorted(matches, key=lambda candidate: not bool(candidate.vehicle)):
                         if self._publish(
                             match, capture_id, options, started,
                             accumulated_capture_ms, accumulated_inference_ms,

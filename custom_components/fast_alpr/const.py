@@ -4,6 +4,7 @@ EVENT_MATCH = "fast_alpr_match"
 EVENT_SCAN = "fast_alpr_scan"
 
 CONF_BACKEND_URL = "backend_url"
+CONF_MATCH_EVENT = "match_event"  # Legacy event compatibility
 CONF_CAMERA = "camera"
 CONF_DETECTION_ENTITY = "detection_entity"
 CONF_KNOWN_PLATES = "known_plates"

@@ -23,6 +23,8 @@ Recognition runs only when triggered. The integration captures up to **four imag
 
 ## Installation
 
+[![Open your Home Assistant instance and open the FastALPR repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=JordanPawlett&repository=ha-fastalpr&category=integration)
+
 1. In Home Assistant OS, add this repository (`https://github.com/JordanPawlett/ha-fastalpr`) under **Settings → Apps → App store → Repositories**.
 2. Install **FastALPR Inference**, enable **Start on boot** and **Watchdog**, and start the app. It preloads its two pretrained models at startup, which may require initial internet access.
 3. Install the **FastALPR** integration from HACS, using this repository as a custom **Integration** source, and restart Home Assistant.

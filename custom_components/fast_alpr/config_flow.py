@@ -56,6 +56,7 @@ def _basic_schema(mode: str, existing: dict | None = None) -> vol.Schema:
 def _advanced_schema(current: dict) -> vol.Schema:
     """Separate, explicitly selected advanced options screen."""
     return vol.Schema({
+        vol.Optional(CONF_BACKEND_URL, default=current.get(CONF_BACKEND_URL, "")): str,
         vol.Required(CONF_FRAMES, default=current.get(CONF_FRAMES, DEFAULT_FRAMES)):
             vol.All(vol.Coerce(int), vol.Range(min=2, max=12)),
         vol.Required(CONF_INTERVAL_MS, default=current.get(CONF_INTERVAL_MS, DEFAULT_INTERVAL_MS)):
@@ -84,6 +85,8 @@ def _validate_basic(hass, values: dict, mode: str) -> None:
 
 
 def _validate_advanced(values: dict) -> None:
+    if values.get(CONF_BACKEND_URL) and not _backend_valid(values[CONF_BACKEND_URL]):
+        raise ValueError("invalid_backend")
     if values[CONF_MIN_MATCHING_FRAMES] > values[CONF_FRAMES]:
         raise ValueError("invalid_frames")
 
@@ -212,8 +215,8 @@ class FastAlprOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             try:
                 _validate_advanced(user_input)
-            except ValueError:
-                errors["base"] = "invalid_frames"
+            except ValueError as exc:
+                errors["base"] = str(exc) if str(exc) in ("invalid_frames", "invalid_backend") else "invalid_frames"
             else:
                 return self.async_create_entry(
                     title="", data={**self._config_entry.options, **user_input}

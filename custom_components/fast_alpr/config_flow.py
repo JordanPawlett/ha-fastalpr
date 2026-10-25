@@ -25,9 +25,10 @@ def schema(options: dict | None = None, *, include_camera: bool = True) -> vol.S
         vol.Required(CONF_CAMERA, default=o[CONF_CAMERA])
         if CONF_CAMERA in o else vol.Required(CONF_CAMERA)
     )
-    detector_key = (
-        vol.Optional(CONF_DETECTION_ENTITY, default=o[CONF_DETECTION_ENTITY])
-        if o.get(CONF_DETECTION_ENTITY) else vol.Optional(CONF_DETECTION_ENTITY)
+    # A schema default would restore the old detector when the user clears it.
+    detector_key = vol.Optional(
+        CONF_DETECTION_ENTITY,
+        description={"suggested_value": o.get(CONF_DETECTION_ENTITY, "")},
     )
     fields = {
         detector_key: selector.EntitySelector(selector.EntitySelectorConfig(domain="binary_sensor")),

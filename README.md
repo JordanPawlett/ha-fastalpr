@@ -13,13 +13,14 @@ Vehicle detection binary sensor: on
   → Home Assistant camera snapshot
   → FastALPR Inference (Supervisor app, isolated ONNX/CPU)
   → OCR results returned to Home Assistant Core
-  → local known-plate comparison across distinct images
-  → fast_alpr_match event + Home Assistant sensors
+  → multi-frame plate agreement (known or unknown)
+  → classify against local configured known registrations
+  → distinct Known / Unknown event entities + bus events
 ```
 
 The Home Assistant integration contains **no native ONNX dependencies**, because Home Assistant Core's Alpine Linux environment cannot use ONNX Runtime's current glibc wheels. The companion Supervisor app uses Debian and provides an independent start-on-boot and HTTP watchdog.
 
-Recognition runs only when triggered. The integration captures up to **four images, starting 350 ms apart**, sends each for inference as soon as it is available, and stops when **two different frames agree** on a configured registration above the confidence threshold. No permanent image file is required.
+Recognition runs only when triggered. The integration captures up to **four images, starting 350 ms apart**, sends each for inference as soon as it is available, and stops when **two different frames agree** on a plausible registration above the confidence threshold, whether known or unknown. No permanent image file is required.
 
 ## Installation
 
@@ -57,7 +58,7 @@ ZZ99 ZZZ=Example vehicle
 AA00 AAA=Another example
 ```
 
-Both `ZZ99 ZZZ` and `ZZ99ZZZ` are treated as the same plate. Friendly names preserve their spaces. All registrations remain in your private Home Assistant config; they are **not sent to the inference backend** or to a third-party service.
+**All recognised plate values are output as UPPERCASE letters and digits only (A–Z, 0–9), with ALL spaces, punctuation and hyphens removed.** For example, an OCR read of `zz99 zzz` or `ZZ99-ZZZ` becomes `ZZ99ZZZ` in **both** native event entities, bus events and last-plate sensors. Automations should compare uppercase normalized values (e.g. `UNKNOWN2`, not `unknown2`). Both `ZZ99 ZZZ` and `ZZ99ZZZ` are treated as the same plate. Friendly names preserve their spaces. All registrations remain in your private Home Assistant config; they are **not sent to the inference backend** or to a third-party service.
 
 ## Advanced recognition settings
 
@@ -67,9 +68,9 @@ Use **FastALPR → Configure → Advanced recognition settings** to adjust the d
 | --- | ---: | --- |
 | Maximum images per scan | **4** | Upper bound; stop early after matching |
 | Time between image starts | **350 ms** | Target scheduling interval (camera latency may add delay) |
-| Images required to agree | **2** | Two independent stills must read the same known registration |
+| Images required to agree | **2** | Two independent stills must agree on a plate, known or unknown |
 | Minimum OCR confidence | **0.85** | Raw model confidence, not a calibrated correctness probability |
-| Repeat match cooldown | **30 s** | Avoid repeat events for the same registration |
+| Repeat match cooldown | **30 s** | Suppress repeated known or unknown plate events independently, per plate |
 | Recognition signal duration | **30 s** | Duration of the binary sensor's `on` state |
 
 The camera is selected once for each integration entry. To use a different camera, add another entry or replace the existing one.
@@ -89,45 +90,57 @@ FastALPR emits a match immediately when enough frames agree; there is no wait fo
 
 The integration cannot measure when a vehicle *first enters the physical frame* before the camera recognises it. Overall arrival-to-event latency also depends on camera detection delay, image freshness/quality and inference speed. The target is **not guaranteed**; measure real arrivals and preferably review the p95 latency. Preloading models avoids cold-start inference delays after a normal app boot.
 
-## Home Assistant automation triggers
+## Home Assistant automation triggers — known and unknown vehicles
 
-FastALPR provides a **native event entity** per configured camera. You can
-build automations without entering raw event names or YAML:
+FastALPR exposes **two distinct native Home Assistant event entities for each camera**:
 
-1. In **Settings → Automations & scenes**, create or edit an automation.
-2. In **When**, choose **Add trigger → By target → Entity**, and select the
-   **FastALPR — Known vehicle recognised** event entity associated with your camera.
-3. Choose **Event received**, then **Known vehicle recognised** in the event-type selector.
-4. Add the action you want (for example, a notification). Review recognition accuracy before
-   using it for any physical access control.
+| Event entity | When emitted | Native event type | Legacy/automation event |
+| --- | --- | --- | --- |
+| **Known vehicle recognised** | A confident plate matches the configured known registrations | `known_vehicle_recognised` | `fast_alpr_match` (unchanged) |
+| **Unknown vehicle recognised** | A confident, plausible plate is **not** in the known list | `unknown_vehicle_recognised` | `fast_alpr_unknown_match` |
 
-For those using YAML, the equivalent is:
+**Unknown does not mean unreadable.** If the model finds no plate, cannot reach the minimum OCR confidence, or cannot get agreement across at least two **different** frames, **neither** event fires. Both event types share the same OCR confidence setting, two-frame agreement and per-plate cooldown (default **30 seconds**).
+
+Exactly one category is emitted per confirmed registration. Unknown matches **never** trigger the known-vehicle event entity, `fast_alpr_match`, any legacy known-match event, or the **Known vehicle detected** binary sensor. This avoids accidentally triggering existing automations that use the known event. **The integration does not decide which vehicles may open gates or need warnings**: these are access policies that belong in separate Home Assistant automations, preferably with an additional independent authorisation factor for gate access.
+
+### Set up a trigger in the visual automation editor
+
+1. In **Settings → Automations & scenes**, add a new automation.
+2. Under **When**, use **Add trigger → By target → Entity** and select your camera's **Known vehicle recognised** or **Unknown vehicle recognised** event entity.
+3. Choose **Event received**, then the corresponding recognition event type.
+4. Under **Then do**, set your desired actions. To alert about **specific unknown plates**, add a condition matching the uppercase `plate` attribute to an explicit list. Never use the *absence* of a plate from a watchlist as permission to open gates.
+
+For YAML users, an example native unknown event trigger is:
 
 ```yaml
 triggers:
   - trigger: event.received
     target:
-      entity_id: event.example_fastalpr_known_vehicle_recognised
+      entity_id: event.example_fastalpr_unknown_vehicle_recognised
     options:
       event_type:
-        - known_vehicle_recognised
+        - unknown_vehicle_recognised
+conditions:
+  - condition: template
+    value_template: >
+      {{ trigger.to_state.attributes.get('plate', '') in ['UNKNOWN', 'UNKNOWN2'] }}
+actions:
+  - action: notify.notify
+    data:
+      message: "Unexpected vehicle {{ trigger.to_state.attributes.plate }}"
 ```
 
-Replace the example entity ID with the actual event entity from Home Assistant.
-Recognition metadata (vehicle, registration, confidence, agreeing-frame count,
-camera, capture ID and latency) is exposed as attributes on the event entity's
-new state. In an automation use e.g. `{{ trigger.to_state.attributes.vehicle }}`.
+Replace the example entity ID with the actual event entity displayed in your Home Assistant instance. `UNKNOWN` and `UNKNOWN2` are illustration-only plate values; real registrations should be entered **only** in your private Home Assistant automations or config, never in a public GitHub issue.
 
-The native event entity and the original `fast_alpr_match` bus event are
-emitted from the **same confirmed recognition**, after known-plate matching,
-confidence checks and the repeat-match cooldown. Existing automations using
-the raw event keep working unchanged.
+The event's attributes include `plate` (always **UPPERCASE, no spaces or punctuation**), `confidence`, `matching_frames`, `camera`, `capture_id`, `timestamp`, `trigger_to_match_ms`, `capture_ms` and `inference_ms`. Known events additionally include the configured `vehicle` friendly name.
+
+Existing automations using the prior **Known vehicle recognised** event entity, the `fast_alpr_match` bus event, or legacy configured event names remain compatible.
 
 ## Home Assistant entities and event
 
-The integration exposes a native **Known vehicle recognised** event entity, plus **Known vehicle detected** and **Inference engine ready** (binary), as well as **Last recognised vehicle**, **Last recognised plate**, **Processed batches**, **Last error**, and the latency diagnostic sensors.
+The integration exposes native **Known vehicle recognised** and **Unknown vehicle recognised** event entities, plus **Known vehicle detected** and **Inference engine ready** (binary), as well as **Last recognised vehicle**, **Last recognised plate**, **Processed batches**, **Last error**, and the latency diagnostic sensors.
 
-When a plate passes confidence and consensus, the integration publishes `fast_alpr_match` with `vehicle`, `plate`, `camera`, `confidence`, `matching_frames`, `capture_id`, `timestamp`, `trigger_to_match_ms`, `capture_ms`, and `inference_ms`.
+When a **known** plate passes confidence and consensus, the integration publishes `fast_alpr_match` with `vehicle`, `plate`, `camera`, `confidence`, `matching_frames`, `capture_id`, `timestamp`, `trigger_to_match_ms`, `capture_ms`, and `inference_ms`.
 
 Example notification automation:
 
@@ -141,6 +154,8 @@ actions:
     data:
       message: "Recognised {{ trigger.event.data.vehicle }}"
 ```
+
+When a **not-configured** plate passes the same confidence and consensus, only `fast_alpr_unknown_match` and the native **Unknown vehicle recognised** event are emitted. The event `plate` field is always **UPPERCASE alphanumeric without whitespace**. A frame with no readable plate does **not** emit an unknown event.
 
 The backend only processes local images; it does not store snapshots permanently or publicly expose a host port.
 

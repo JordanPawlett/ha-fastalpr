@@ -98,5 +98,25 @@ def test_setup_adds_a_single_event_entity(event_platform):
     added = []
     import asyncio
     asyncio.run(module.async_setup_entry(None, entry, added.extend))
-    assert len(added) == 1
+    assert len(added) == 2
     assert added[0]._attr_unique_id == "other-entry_known_vehicle_event"
+    assert added[1]._attr_unique_id == "other-entry_unknown_vehicle_event"
+
+
+def test_unknown_event_uses_distinct_dispatcher_and_plate_metadata(event_platform):
+    module, callbacks = event_platform
+    entry = SimpleNamespace(entry_id="other-entry", data={"camera": "camera.demo"})
+    entity = module.FastAlprUnknownEvent(entry)
+    entity.hass = object()
+    entity.emitted = []
+    entity.writes = 0
+    import asyncio
+    asyncio.run(entity.async_added_to_hass())
+    match = {"plate": "UNKNOWN2", "confidence": 0.94,
+             "matching_frames": 2, "camera": "camera.demo"}
+    callbacks["fast_alpr_unknown_match_other-entry"](match)
+    assert entity._attr_event_types == ["unknown_vehicle_recognised"]
+    assert entity.emitted == [("unknown_vehicle_recognised", match)]
+    assert entity.writes == 1
+    assert "fast_alpr_match_other-entry" not in callbacks
+    entity.cleanup()

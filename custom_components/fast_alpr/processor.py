@@ -124,7 +124,7 @@ class PlateConsensus:
         accepted: dict[str, float] = {}
         for detection in detections:
             plate = normalize_plate(detection.get("plate", ""))
-            if plate not in self.known:
+            if not PLATE_PATTERN.fullmatch(plate):
                 continue
             score = float(detection.get("confidence", 0))
             if score >= self.min_confidence:
@@ -135,7 +135,7 @@ class PlateConsensus:
             scores.append(score)
             if len(scores) == self.min_frames:
                 matches.append(Match(
-                    plate=plate, vehicle=self.known[plate],
+                    plate=plate, vehicle=self.known.get(plate, ""),
                     confidence=max(scores), matching_frames=len(scores),
                 ))
         return matches

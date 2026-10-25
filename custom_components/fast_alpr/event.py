@@ -17,7 +17,7 @@ EVENT_KNOWN_VEHICLE = "known_vehicle_recognised"
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Expose one independently addressable recognition trigger per camera."""
-    async_add_entities([FastAlprRecognitionEvent(entry)])
+    async_add_entities([FastAlprRecognitionEvent(entry), FastAlprUnknownEvent(entry)])
 
 
 class FastAlprRecognitionEvent(EventEntity):
@@ -50,5 +50,38 @@ class FastAlprRecognitionEvent(EventEntity):
         self.async_on_remove(async_dispatcher_connect(
             self.hass,
             f"fast_alpr_match_{self.entry.entry_id}",
+            self._on_match,
+        ))
+
+
+class FastAlprUnknownEvent(EventEntity):
+    """Unknown is a confidently recognised plate absent from the allowlist."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_name = "Unknown vehicle recognised"
+    _attr_icon = "mdi:car-search"
+    _attr_event_types = ["unknown_vehicle_recognised"]
+
+    def __init__(self, entry):
+        self.entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_unknown_vehicle_event"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=f"FastALPR ({entry.data[CONF_CAMERA]})",
+            manufacturer="FastALPR",
+            model="Local licence plate recognition",
+        )
+
+    @callback
+    def _on_match(self, event_data: dict):
+        self._trigger_event("unknown_vehicle_recognised", event_data)
+        self.async_write_ha_state()
+
+    async def async_added_to_hass(self):
+        await super().async_added_to_hass()
+        self.async_on_remove(async_dispatcher_connect(
+            self.hass,
+            f"fast_alpr_unknown_match_{self.entry.entry_id}",
             self._on_match,
         ))

@@ -36,3 +36,33 @@ def test_media_path_confinement(tmp_path, monkeypatch):
 def test_confidence_mean():
     from types import SimpleNamespace
     assert server._confidence(SimpleNamespace(confidence=[0.5, 1.0])) == 0.75
+
+
+def test_recognition_http_reports_correlated_timings_without_plates(monkeypatch, caplog):
+    import json
+    import logging
+    import threading
+    import urllib.request
+    from types import SimpleNamespace
+    class Model:
+        def predict(self, path):
+            assert Path(path).read_bytes() == b'\xff\xd8\xffimage'
+            return [SimpleNamespace(ocr=SimpleNamespace(text='ZZ99ZZZ', confidence=.95))]
+    monkeypatch.setattr(server, '_MODEL', Model())
+    caplog.set_level(logging.INFO)
+    httpd = server.ThreadingHTTPServer(('127.0.0.1', 0), server.Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        req = urllib.request.Request(f'http://127.0.0.1:{httpd.server_port}/recognize',
+            data=b'\xff\xd8\xffimage', headers={'X-Capture-ID': 'a'*32, 'X-Frame-Index': '0'})
+        with urllib.request.urlopen(req) as response:
+            payload = json.load(response)
+        assert payload['detections'][0]['plate'] == 'ZZ99ZZZ'
+        assert {'queue_ms', 'model_ms', 'body_read_ms', 'total_ms'} <= payload['timings'].keys()
+        assert 'capture_id=' + 'a'*32 in caplog.text
+        assert 'ZZ99ZZZ' not in caplog.text
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join()

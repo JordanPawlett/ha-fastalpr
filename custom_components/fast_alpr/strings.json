@@ -5,7 +5,7 @@
       "user": {
         "title": "Choose recognition trigger",
         "menu_options": {
-          "automatic": "Automatic (vehicle detection) — recommended",
+          "automatic": "Automatic (vehicle detection) \u2014 recommended",
           "manual": "Manual or external automation"
         }
       },
@@ -65,15 +65,17 @@
       },
       "advanced": {
         "title": "Advanced recognition settings",
-        "description": "Defaults favour rapid recognition from two agreeing still images. The backend URL is normally discovered automatically; override it only for an external backend.",
+        "description": "Defaults favour rapid recognition from two agreeing still images. The backend URL is normally discovered automatically; override it only for an external backend. Auditing saves the exact recognition frames and private OCR results under /media/fast_alpr, after recognition. Disable any separate snapshot collector when enabling it. Retention applies per camera entry.",
         "data": {
           "frames": "Maximum images per scan",
           "interval_ms": "Time between images (milliseconds)",
           "min_matching_frames": "Images required to agree",
-          "min_confidence": "Minimum OCR confidence (0.0–1.0)",
+          "min_confidence": "Minimum OCR confidence (0.0\u20131.0)",
           "cooldown_seconds": "Repeat match cooldown (seconds)",
           "signal_seconds": "Recognition signal duration (seconds)",
-          "backend_url": "Backend URL override (optional)"
+          "backend_url": "Backend URL override (optional)",
+          "capture_audit": "Save capture audit images and OCR results locally",
+          "audit_keep_scans": "Maximum audit scans to retain"
         }
       }
     },

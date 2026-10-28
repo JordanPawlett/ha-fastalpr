@@ -87,10 +87,16 @@ def _confidence(ocr):
     return float(score or 0.0)
 
 
-def _recognize_file(file_path: Path):
+def _recognize_file(file_path: Path, timings: dict | None = None):
     """Serialise predictions to bound CPU and avoid model thread-safety assumptions."""
+    queued = time.monotonic()
     with _MODEL_LOCK:
+        started = time.monotonic()
         predictions = _model().predict(str(file_path))
+        finished = time.monotonic()
+    if timings is not None:
+        timings.update(queue_ms=round((started - queued) * 1000, 3),
+                       model_ms=round((finished - started) * 1000, 3))
     detections = []
     for prediction in predictions:
         ocr = getattr(prediction, "ocr", None)
@@ -137,6 +143,17 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "not found"})
 
     def do_POST(self):
+        started = time.monotonic()
+        # Bound and validate client-supplied correlation fields before logging.
+        capture_id = self.headers.get("X-Capture-ID", "")
+        if not re.fullmatch(r"[0-9a-f]{32}", capture_id):
+            capture_id = "unattributed"
+        frame_index = self.headers.get("X-Frame-Index", "")
+        if not re.fullmatch(r"[0-9]{1,2}", frame_index):
+            frame_index = "unknown"
+        status = "error"
+        timings = {}
+        detections = []
         try:
             raw_length = self.headers.get("Content-Length", "")
             if not raw_length.isdigit():
@@ -146,6 +163,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not 1 <= length <= MAX_IMAGE_BYTES:
                     raise ValueError("Image size outside supported range")
                 data = self.rfile.read(length)
+                timings["body_read_ms"] = round((time.monotonic() - started) * 1000, 3)
                 jpeg = data.startswith(b"\xff\xd8\xff")
                 png = data.startswith(b"\x89PNG\r\n\x1a\n")
                 if not (jpeg or png):
@@ -153,8 +171,10 @@ class Handler(BaseHTTPRequestHandler):
                 with tempfile.TemporaryDirectory(prefix="alpr_") as root:
                     path = Path(root) / ("frame.jpg" if jpeg else "frame.png")
                     path.write_bytes(data)
-                    detections = _recognize_file(path)
-                self._json(200, {"detections": detections})
+                    detections = _recognize_file(path, timings)
+                timings["total_ms"] = round((time.monotonic() - started) * 1000, 3)
+                self._json(200, {"detections": detections, "timings": timings})
+                status = "ok"
             elif self.path == "/scan-media":
                 if not 1 <= length <= MAX_JSON_BYTES:
                     raise ValueError("Request size outside supported range")
@@ -169,10 +189,17 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._json(404, {"error": "not found"})
         except (ValueError, json.JSONDecodeError, FileNotFoundError) as exc:
+            status = "invalid_request"
             self._json(400, {"error": str(exc)})
         except Exception:
-            LOGGER.exception("Inference request failed")
+            LOGGER.exception("Inference request failed capture_id=%s frame_index=%s", capture_id, frame_index)
             self._json(503, {"error": "inference unavailable"})
+        finally:
+            if self.path == "/recognize":
+                LOGGER.info("Recognition capture_id=%s frame_index=%s status=%s detections=%s confidences=%s timings=%s elapsed_ms=%.3f",
+                            capture_id, frame_index, status, len(detections),
+                            [d["confidence"] for d in detections], timings,
+                            (time.monotonic() - started) * 1000)
 
     def log_message(self, fmt, *args):
         # Never log raw payloads or recognised registrations.

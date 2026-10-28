@@ -1,0 +1,28 @@
+name: Publish reviewed FastALPR 0.7.0
+on:
+  push:
+    branches: [release/publish-0.7.0]
+    paths: [.github/workflows/publish-reviewed-release.yml]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish reviewed release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: JordanPawlett/ha-fastalpr
+        run: |
+          cat > release-notes.md <<'NOTES'
+          Adds integration-owned capture auditing of the exact frames sent to OCR, with bounded retention (100 scans by default), per-frame UTC timestamps and monotonic timings, confidence/rejection reasons and consensus outcomes.
+
+          Correlated integration/backend logs now distinguish snapshot fetch latency, model-lock wait and inference execution. New diagnostic sensors and redacted downloadable diagnostics are included.
+
+          Includes FastALPR integration 0.7.0 and FastALPR Inference app 0.3.0. Update both components. Enable capture auditing under Advanced recognition settings, verify an audit bundle, then disable any separate snapshot collector.
+
+          Image retrieval and matching thresholds are unchanged. Auditing is off by default. Audit bundles contain private images and OCR results and are retained locally; retention is by scan count.
+
+          Validation: 33 tests passed; GitHub Validate checks passed. See PR #9.
+          NOTES
+          gh release create v0.7.0 --target 7345f067c4cb85e42965031db3ecf2c825a7c4e2 --title "FastALPR 0.7.0 — Capture auditing and diagnostics" --notes-file release-notes.md

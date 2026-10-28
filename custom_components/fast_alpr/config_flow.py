@@ -11,6 +11,7 @@ from homeassistant.helpers import selector
 from homeassistant.helpers.service_info.hassio import HassioServiceInfo
 
 from .const import (
+    CONF_CAPTURE_AUDIT, CONF_AUDIT_KEEP_SCANS, DEFAULT_AUDIT_KEEP_SCANS,
     CONF_BACKEND_URL, CONF_CAMERA, CONF_COOLDOWN_SECONDS,
     CONF_DETECTION_ENTITY, CONF_FRAMES, CONF_INTERVAL_MS, CONF_KNOWN_PLATES,
     CONF_MATCH_EVENT, CONF_MIN_CONFIDENCE, CONF_MIN_MATCHING_FRAMES,
@@ -56,6 +57,9 @@ def _basic_schema(mode: str, existing: dict | None = None) -> vol.Schema:
 def _advanced_schema(current: dict) -> vol.Schema:
     """Separate, explicitly selected advanced options screen."""
     return vol.Schema({
+        vol.Required(CONF_CAPTURE_AUDIT, default=current.get(CONF_CAPTURE_AUDIT, False)): bool,
+        vol.Required(CONF_AUDIT_KEEP_SCANS, default=current.get(CONF_AUDIT_KEEP_SCANS, DEFAULT_AUDIT_KEEP_SCANS)):
+            vol.All(vol.Coerce(int), vol.Range(min=1, max=1000)),
         vol.Optional(CONF_BACKEND_URL, description={"suggested_value": current.get(CONF_BACKEND_URL, "")}): str,
         vol.Required(CONF_FRAMES, default=current.get(CONF_FRAMES, DEFAULT_FRAMES)):
             vol.All(vol.Coerce(int), vol.Range(min=2, max=12)),

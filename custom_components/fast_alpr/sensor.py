@@ -7,6 +7,8 @@ from homeassistant.helpers.entity import EntityCategory
 
 async def async_setup_entry(hass, entry, async_add_entities):
     async_add_entities([
+        FastAlprSensor(entry, "last_scan_outcome", "Last scan outcome", "mdi:list-status", diagnostic=True),
+        FastAlprSensor(entry, "last_audit_error", "Last audit error", "mdi:alert-circle-outline", diagnostic=True),
         FastAlprSensor(entry, "last_vehicle", "Last recognised vehicle", "mdi:car"),
         FastAlprSensor(entry, "last_plate", "Last recognised plate", "mdi:card-text-outline"),
         FastAlprSensor(entry, "processed_batches", "Processed batches", "mdi:image-multiple", diagnostic=True),
@@ -39,6 +41,8 @@ class FastAlprSensor(SensorEntity):
 
     @property
     def extra_state_attributes(self):
+        if self.key == "last_scan_outcome":
+            return {"capture_id": self.runtime.last_processed, "audit_path": self.runtime.last_audit_path}
         if self.key != "last_vehicle":
             return None
         r = self.runtime

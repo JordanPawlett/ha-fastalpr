@@ -20,7 +20,7 @@ Vehicle detection binary sensor: on
 
 The Home Assistant integration contains **no native ONNX dependencies**, because Home Assistant Core's Alpine Linux environment cannot use ONNX Runtime's current glibc wheels. The companion Supervisor app uses Debian and provides an independent start-on-boot and HTTP watchdog.
 
-Recognition runs only when triggered. The integration captures up to **four images, starting 350 ms apart**, sends each for inference as soon as it is available, and stops when **two different frames agree** on a plausible registration above the confidence threshold, whether known or unknown. No permanent image file is required.
+Recognition runs only when triggered. The integration captures up to **four images, targeting starts 350 ms apart**, sends each for inference as soon as it is available, and stops when **two different frames agree** on a plausible registration above the confidence threshold, whether known or unknown. No permanent image file is required.
 
 ## Installation
 
@@ -159,38 +159,76 @@ When a **not-configured** plate passes the same confidence and consensus, only `
 
 The backend only processes local images; it does not store snapshots permanently or publicly expose a host port.
 
-## Optional: Collect test/training snapshots
+## Capture auditing and observability
 
-The snapshot collector is **not required** by FastALPR. It is useful if you want a separate local image dataset to compare recognition engines and improve quality in future.
+Enable **Configure → Advanced recognition settings → Save capture audit images and
+OCR results locally** to save the exact JPEG/PNG bytes submitted to recognition.
+Auditing is off by default. It does not request extra snapshots or change camera
+retrieval, confidence thresholds, frame scheduling, or consensus behaviour.
 
-For any camera and vehicle sensor, create a Media directory such as `/media/alpr-samples`, then create this example Home Assistant automation after substituting your own entity IDs:
+Each scan writes `/media/fast_alpr/<entry_id>/<capture_id>/scan.json` and
+`frame_01.jpg` (or `.png`), etc. Files are written in an executor **after** the
+recognition phase; audit failures do not undo recognition. The active scan remains
+busy during the write, so triggers during that short flush are coalesced. Only
+frames actually captured are saved, including frames whose inference is cancelled
+on early consensus. The audit is not a fixed-length training burst.
 
-```yaml
-alias: Collect vehicle samples
-mode: single
-max_exceeded: silent
-triggers:
-  - trigger: state
-    entity_id: binary_sensor.example_vehicle
-    to: "on"
-actions:
-  - variables:
-      batch: "{{ now().strftime('%Y%m%d_%H%M%S_%f') }}"
-  - repeat:
-      count: 4
-      sequence:
-        - action: camera.snapshot
-          target:
-            entity_id: camera.example_camera
-          data:
-            filename: "/media/alpr-samples/{{ batch }}_{{ '%02d' | format(repeat.index) }}.jpg"
-        - delay:
-            milliseconds: 350
-  - delay:
-      seconds: 30
-```
+The JSON records:
 
-Images are retained until you remove them. This dataset may contain personal data about passing vehicles: manage retention and do not commit it to GitHub. Camera integrations can support different snapshot resolutions and freshness.
+- A shared capture ID, one-based frame indices, camera and recognition settings.
+- UTC snapshot request/receive/finish times, monotonic fetch durations, byte counts
+  and SHA-256 hashes (use hashes to identify repeated camera images).
+- Inference request/response/finish times and backend body-read, model-lock wait,
+  model-execution and total processing durations (when the backend supports them).
+- Normalised OCR plates, confidence, rejection reasons, candidate votes and final
+  outcome: no detections, rejected detections, insufficient agreement, cooldown
+  suppression, known/unknown match, error or cancellation. Unfinished frames are
+  explicitly labelled and are not treated as empty OCR results.
+
+The image's printed camera timestamp remains visible in the saved original. We
+**do not extract or invent an exposure timestamp**. Compare it manually with the
+request/receive timestamps, allowing for camera clock offset and overlay precision.
+Durations use monotonic clocks; backend durations do not require clock sync.
+
+Retention keeps the latest **100 scan directories per entry** by default (1–1000
+configurable). Pruning runs after an audit write and only removes UUID-named scan
+directories in that entry's audit folder. It is count-based, not a byte or age
+limit; allow sufficient disk space. Turning auditing off stops future writes but
+does not delete existing bundles. Images and raw OCR results remain local and
+contain private data; review/redact them before sharing. Older collector datasets
+are untouched.
+
+**Migration from a separate collector:** update the integration and backend,
+enable capture auditing, verify a new scan bundle, then disable the separate
+snapshot-collection automation. The integration does not disable user automations
+itself. Running both still makes two independent sets of camera requests and can
+introduce contention. Existing recognition/gate automations remain unchanged.
+
+### Logs and downloadable diagnostics
+
+Home Assistant INFO logs include scan start/end, capture ID, outcome, frame and
+candidate counts, maximum agreement and cumulative timing. DEBUG adds per-frame
+request/receive timing, confidence, rejection reasons and votes. Candidate numbers
+are local to a scan: general logs never print OCR plates or the known-plate list.
+Set the `custom_components.fast_alpr` logger to INFO or DEBUG via Home Assistant's
+logger controls (the default WARNING level hides these new informational logs).
+
+The backend emits one INFO summary per recognition request with the same
+`capture_id`, **zero-based** `frame_index`, status, detection count, confidence
+values, model-lock wait, model time and total duration. It never logs OCR plates.
+Inference response timings are additive API fields; the integration also works
+with an older backend, but its backend timing fields will be empty.
+
+The **Last scan outcome** diagnostic sensor gives the last capture ID and audit
+folder; **Last audit error** reports storage failures separately from recognition
+errors. Home Assistant's **Download diagnostics** contains the most recent scan
+with plates removed, even when image auditing is off. This in-memory report is
+replaced on the next scan and lost on restart. Persistent per-frame evidence
+requires auditing enabled. Logs and timings cannot reconstruct past image content.
+
+Capture and inference overlap. Cumulative inference time includes HTTP/queue time
+and is not pure model CPU time; do not add it to capture time to derive scan wall
+time. Snapshot fetches remain sequential: 350 ms is a target, not a guarantee.
 
 ## Troubleshooting
 

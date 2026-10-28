@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import hashlib
+import json
+from pathlib import Path
 import time
 from contextlib import suppress
 from datetime import datetime, timezone
@@ -21,7 +24,9 @@ from .const import (
     CONF_MIN_CONFIDENCE, CONF_MIN_MATCHING_FRAMES, CONF_SIGNAL_SECONDS,
     EVENT_MATCH, EVENT_UNKNOWN_MATCH,
 )
-from .processor import PlateConsensus, parse_known_plates
+from .processor import PlateConsensus, parse_known_plates, normalize_plate, PLATE_PATTERN
+from .audit import save_scan
+from .const import CONF_CAPTURE_AUDIT, CONF_AUDIT_KEEP_SCANS, DEFAULT_AUDIT_KEEP_SCANS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,6 +40,10 @@ class FastAlprRuntime:
         self.task: asyncio.Task | None = None
         self._closed = False
         self.last_sent: dict[str, float] = {}
+        self.last_scan_outcome = None
+        self.last_audit_path = None
+        self.last_audit_error = None
+        self.last_scan_report = None
         self.last_error: str | None = None
         self.last_vehicle: str | None = None
         self.last_plate: str | None = None
@@ -78,6 +87,7 @@ class FastAlprRuntime:
     def start_capture(self):
         """Coalesce triggers while the previous scan remains active."""
         if self._closed or (self.task is not None and not self.task.done()):
+            _LOGGER.debug("Scan trigger coalesced entry=%s closed=%s", self.entry.entry_id, self._closed)
             return
         self.task = self.hass.async_create_task(self.capture_and_recognise())
 
@@ -101,20 +111,35 @@ class FastAlprRuntime:
             self.backend_ready = ready
             self.notify()
 
-    async def _recognise_frame(self, index: int, content: bytes, mime: str, endpoint: str):
+    async def _recognise_frame(self, index: int, content: bytes, mime: str, endpoint: str, capture_id: str, frame: dict):
         began = time.monotonic()
-        session = async_get_clientsession(self.hass)
-        async with session.post(
-            endpoint, data=content,
-            headers={"Content-Type": mime},
-            timeout=ClientTimeout(total=8),
-        ) as response:
-            response.raise_for_status()
-            data = await response.json()
-        detections = data.get("detections")
-        if not isinstance(detections, list):
-            raise ValueError("Inference backend returned invalid detections")
-        return index, detections, int((time.monotonic() - began) * 1000)
+        frame["inference_requested_at"] = datetime.now(timezone.utc).isoformat()
+        frame["status"] = "inference_pending"
+        try:
+            session = async_get_clientsession(self.hass)
+            async with session.post(
+                endpoint, data=content,
+                headers={"Content-Type": mime, "X-Capture-ID": capture_id, "X-Frame-Index": str(index)},
+                timeout=ClientTimeout(total=8),
+            ) as response:
+                response.raise_for_status()
+                data = await response.json()
+            frame["inference_received_at"] = datetime.now(timezone.utc).isoformat()
+            frame["backend_timings"] = data.get("timings", {})
+            detections = data.get("detections")
+            if not isinstance(detections, list):
+                raise ValueError("Inference backend returned invalid detections")
+            return index, detections, int((time.monotonic() - began) * 1000)
+        except asyncio.CancelledError:
+            frame["status"] = "inference_cancelled"
+            raise
+        except Exception as exc:
+            frame["status"] = "inference_failed"
+            frame["error_type"] = type(exc).__name__
+            raise
+        finally:
+            frame["inference_finished_at"] = datetime.now(timezone.utc).isoformat()
+            frame["inference_ms"] = int((time.monotonic() - began) * 1000)
 
     def _publish(self, match, capture_id: str, options: dict, started: float,
                  capture_ms: int, inference_ms: int):
@@ -188,6 +213,18 @@ class FastAlprRuntime:
         pending: set[asyncio.Task] = set()
         accumulated_capture_ms = 0
         accumulated_inference_ms = 0
+        images = []
+        report = {
+            "capture_id": capture_id, "camera": options[CONF_CAMERA],
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "frames": [], "outcome": "no_detections",
+            "settings": {key: options[key] for key in (
+                CONF_FRAMES, CONF_INTERVAL_MS, CONF_MIN_CONFIDENCE, CONF_MIN_MATCHING_FRAMES)},
+        }
+        self.last_audit_path = None
+        self.last_audit_error = None
+        candidate_ids = {}
+        _LOGGER.info("Scan started capture_id=%s camera=%s settings=%s", capture_id, options[CONF_CAMERA], report["settings"])
         try:
             known = parse_known_plates(options[CONF_KNOWN_PLATES])
             backend = options.get(CONF_BACKEND_URL)
@@ -214,7 +251,27 @@ class FastAlprRuntime:
                     index, detections, spent = job.result()
                     accumulated_inference_ms += spent
                     # Prefer known registrations when several plates agree.
+                    frame = report["frames"][index]
+                    frame["status"] = "processed"
+                    frame["detections"] = []
+                    for detection in detections:
+                        plate = normalize_plate(detection.get("plate", ""))
+                        score = float(detection.get("confidence", 0))
+                        candidate = candidate_ids.setdefault(plate, len(candidate_ids) + 1)
+                        reason = ("invalid_plate" if not PLATE_PATTERN.fullmatch(plate) else
+                                  "below_confidence" if score < consensus.min_confidence else "accepted")
+                        frame["detections"].append({"plate": plate, "candidate": candidate,
+                                                    "confidence": score, "reason": reason})
                     matches = consensus.add(index, detections)
+                    frame["votes"] = {str(candidate_ids[p]): len(scores) for p, scores in consensus.observations.items()}
+                    if report["outcome"] != "cooldown_suppressed":
+                        if consensus.observations:
+                            report["outcome"] = "insufficient_agreement"
+                        elif detections:
+                            report["outcome"] = "rejected_detections"
+                    _LOGGER.debug("Frame result capture_id=%s frame=%s inference_ms=%s backend=%s candidates=%s votes=%s",
+                                  capture_id, index + 1, spent, frame.get("backend_timings"),
+                                  [{k: v for k, v in d.items() if k != "plate"} for d in frame["detections"]], frame["votes"])
                     for match in sorted(
                         matches, key=lambda candidate: not bool(candidate.vehicle)
                     ):
@@ -222,7 +279,9 @@ class FastAlprRuntime:
                             match, capture_id, options, started,
                             accumulated_capture_ms, accumulated_inference_ms,
                         ):
+                            report["outcome"] = "known_match" if match.vehicle else "unknown_match"
                             return True
+                        report["outcome"] = "cooldown_suppressed"
                 return False
 
             count = int(options[CONF_FRAMES])
@@ -239,12 +298,32 @@ class FastAlprRuntime:
                 began = time.monotonic()
                 if first_capture_started is None:
                     first_capture_started = began
-                image = await async_get_image(self.hass, options[CONF_CAMERA], timeout=4)
-                accumulated_capture_ms += int((time.monotonic() - began) * 1000)
+                frame = {"index": index + 1, "snapshot_requested_at": datetime.now(timezone.utc).isoformat(),
+                         "request_offset_ms": round((began - started) * 1000), "status": "capture_pending"}
+                report["frames"].append(frame)
+                _LOGGER.debug("Snapshot requested capture_id=%s frame=%s at=%s", capture_id, index + 1, frame["snapshot_requested_at"])
+                try:
+                    image = await async_get_image(self.hass, options[CONF_CAMERA], timeout=4)
+                except Exception as exc:
+                    frame["status"] = "capture_failed"
+                    frame["error_type"] = type(exc).__name__
+                    raise
+                finally:
+                    frame["snapshot_finished_at"] = datetime.now(timezone.utc).isoformat()
+                    frame["capture_ms"] = int((time.monotonic() - began) * 1000)
+                    accumulated_capture_ms += frame["capture_ms"]
+                frame["snapshot_received_at"] = datetime.now(timezone.utc).isoformat()
+                frame["capture_ms"] = int((time.monotonic() - began) * 1000)
+                frame["bytes"] = len(image.content)
+                frame["sha256"] = hashlib.sha256(image.content).hexdigest()
+                frame["status"] = "captured"
+                _LOGGER.debug("Snapshot received capture_id=%s frame=%s capture_ms=%s bytes=%s", capture_id, index + 1, frame["capture_ms"], frame["bytes"])
                 if image.content_type not in ("image/jpeg", "image/png") or not image.content:
                     raise ValueError("Camera did not return a valid still image")
+                if options.get(CONF_CAPTURE_AUDIT, False):
+                    images.append((index, image.content_type, image.content))
                 pending.add(self.hass.async_create_task(
-                    self._recognise_frame(index, image.content, image.content_type, endpoint)
+                    self._recognise_frame(index, image.content, image.content_type, endpoint, capture_id, frame)
                 ))
                 if await consume(0):
                     return
@@ -253,10 +332,13 @@ class FastAlprRuntime:
                 if await consume(None):
                     return
         except asyncio.CancelledError:
+            report["outcome"] = "cancelled"
             raise
         except Exception as exc:
+            report["outcome"] = "error"
+            report["error_type"] = type(exc).__name__
             self.last_error = f"{type(exc).__name__}: {exc}"[:240]
-            _LOGGER.exception("FastALPR scan failed")
+            _LOGGER.exception("FastALPR scan failed capture_id=%s", capture_id)
         else:
             self.last_error = None
         finally:
@@ -270,6 +352,34 @@ class FastAlprRuntime:
             self.last_capture_ms = accumulated_capture_ms
             self.last_inference_ms = accumulated_inference_ms
             self.processed_batches += 1
+            report.update(finished_at=datetime.now(timezone.utc).isoformat(), scan_ms=self.last_scan_ms,
+                          capture_ms=accumulated_capture_ms, inference_ms=accumulated_inference_ms)
+            for frame in report["frames"]:
+                if frame["status"] in ("capture_pending", "captured", "inference_pending"):
+                    frame["status"] = "unfinished_" + frame["status"]
+            report["detection_count"] = sum(len(f.get("detections", [])) for f in report["frames"])
+            report["max_agreeing_frames"] = max(
+                (v for f in report["frames"] for v in f.get("votes", {}).values()), default=0)
+            self.last_scan_outcome = report["outcome"]
+            _LOGGER.info("Scan finished capture_id=%s outcome=%s frames=%s scan_ms=%s capture_ms=%s inference_ms=%s detections=%s max_agreeing_frames=%s",
+                         capture_id, report["outcome"], len(report["frames"]), self.last_scan_ms,
+                         accumulated_capture_ms, accumulated_inference_ms,
+                         report["detection_count"], report["max_agreeing_frames"])
+            # Retain a redacted in-memory report even when image auditing is off.
+            self.last_scan_report = json.loads(json.dumps(report))
+            for frame in self.last_scan_report["frames"]:
+                for detection in frame.get("detections", []):
+                    detection.pop("plate", None)
+            if options.get(CONF_CAPTURE_AUDIT, False):
+                # Off the event loop, after all capture and recognition has finished.
+                root = Path("/media/fast_alpr") / self.entry.entry_id
+                try:
+                    self.last_audit_path = await self.hass.async_add_executor_job(
+                        save_scan, root, report, images,
+                        int(options.get(CONF_AUDIT_KEEP_SCANS, DEFAULT_AUDIT_KEEP_SCANS)))
+                except Exception as exc:
+                    self.last_audit_error = type(exc).__name__
+                    _LOGGER.exception("Audit write failed capture_id=%s", capture_id)
             self.notify()
 
     async def close(self):

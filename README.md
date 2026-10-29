@@ -183,7 +183,10 @@ The JSON records:
 - Normalised OCR plates, confidence, rejection reasons, candidate votes and final
   outcome: no detections, rejected detections, insufficient agreement, cooldown
   suppression, known/unknown match, error or cancellation. Unfinished frames are
-  explicitly labelled and are not treated as empty OCR results.
+  explicitly labelled and are not treated as empty OCR results. A frame marked
+  `inference_completed` retains its OCR results even if an error or early match
+  stops consensus before consuming it; `processed` means it also contributed to
+  consensus. Recording these results does not publish additional matches.
 
 The image's printed camera timestamp remains visible in the saved original. We
 **do not extract or invent an exposure timestamp**. Compare it manually with the
@@ -191,7 +194,9 @@ request/receive timestamps, allowing for camera clock offset and overlay precisi
 Durations use monotonic clocks; backend durations do not require clock sync.
 
 Retention keeps the latest **100 scan directories per entry** by default (1–1000
-configurable). Pruning runs after an audit write and only removes UUID-named scan
+configurable). Failed image/report writes remove the incomplete bundle before
+reporting the error; cleanup failures are also surfaced as audit errors.
+Pruning runs after an audit write and only removes UUID-named scan
 directories in that entry's audit folder. It is count-based, not a byte or age
 limit; allow sufficient disk space. Turning auditing off stops future writes but
 does not delete existing bundles. Images and raw OCR results remain local and
@@ -227,7 +232,9 @@ replaced on the next scan and lost on restart. Persistent per-frame evidence
 requires auditing enabled. Logs and timings cannot reconstruct past image content.
 
 Capture and inference overlap. Cumulative inference time includes HTTP/queue time
-and is not pure model CPU time; do not add it to capture time to derive scan wall
+and is not pure model CPU time. Final scan reports and the inference-time sensor
+include failed and cancelled requests after all tasks finish; match-event timing
+remains the total consumed at publication. Do not add inference time to capture time to derive scan wall
 time. Snapshot fetches remain sequential: 350 ms is a target, not a guarantee.
 
 ## Troubleshooting

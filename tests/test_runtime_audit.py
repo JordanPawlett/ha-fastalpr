@@ -186,3 +186,126 @@ def test_backend_failure_is_distinct_from_no_detection(runtime_module, monkeypat
     assert runtime.last_scan_outcome == 'error'
     assert any(f['status'] == 'inference_failed' for f in runtime.last_scan_report['frames'])
     assert runtime.last_scan_report['error_type'] == 'ConnectionError'
+
+
+@pytest.mark.parametrize('failed_write', ['write_bytes', 'write_text'])
+def test_failed_writes_remove_partial_bundles(runtime_module, monkeypatch, tmp_path, failed_write):
+    existing = Path(runtime_module.save_scan(
+        tmp_path, {'capture_id': 'a' * 32}, [(0, 'image/jpeg', b'existing')], 1))
+    original = getattr(Path, failed_write)
+
+    def fail_after_partial_write(path, content, *args, **kwargs):
+        original(path, content[:3], *args, **kwargs)
+        raise OSError('disk full')
+
+    monkeypatch.setattr(Path, failed_write, fail_after_partial_write)
+    for i in range(3):
+        with pytest.raises(OSError, match='disk full'):
+            runtime_module.save_scan(tmp_path, {'capture_id': f'{i:032x}'},
+                                     [(0, 'image/jpeg', b'private image')], 1)
+    assert list(tmp_path.iterdir()) == [existing]
+    assert (existing / 'frame_01.jpg').read_bytes() == b'existing'
+
+
+def test_completed_results_survive_later_capture_failure(runtime_module, monkeypatch, tmp_path, caplog):
+    caplog.set_level(logging.DEBUG)
+    runtime, _, _, _, events = setup_scan(runtime_module, monkeypatch, tmp_path,
+        [[{'plate': 'ZZ99ZZZ', 'confidence': .95}], []])
+    original_camera = runtime_module.async_get_image
+    original_recognise = runtime._recognise_frame
+
+    async def run():
+        completed = asyncio.Event()
+        second_capture = asyncio.Event()
+        calls = 0
+
+        async def recognise(*args):
+            await second_capture.wait()
+            result = await original_recognise(*args)
+            completed.set()
+            return result
+
+        async def camera(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                second_capture.set()
+                await completed.wait()
+                raise RuntimeError('camera offline')
+            return await original_camera(*args, **kwargs)
+
+        monkeypatch.setattr(runtime, '_recognise_frame', recognise)
+        monkeypatch.setattr(runtime_module, 'async_get_image', camera)
+        await runtime.capture_and_recognise()
+
+    asyncio.run(run())
+    report = json.loads((Path(runtime.last_audit_path) / 'scan.json').read_text())
+    assert report['outcome'] == 'error'
+    assert report['frames'][0]['status'] == 'inference_completed'
+    assert report['frames'][0]['detections'][0]['plate'] == 'ZZ99ZZZ'
+    assert report['detection_count'] == 1
+    assert not events
+    assert 'ZZ99ZZZ' not in json.dumps(runtime.last_scan_report)
+    assert 'ZZ99ZZZ' not in caplog.text
+
+
+def test_early_consensus_retains_unconsumed_completed_results(runtime_module, monkeypatch, tmp_path):
+    runtime, _, _, _, events = setup_scan(runtime_module, monkeypatch, tmp_path,
+        [[{'plate': 'ZZ99ZZZ', 'confidence': .95}]] * 3)
+    original_wait = asyncio.wait
+
+    async def batch_completed(tasks, *, timeout, return_when):
+        # Collect all three results together so consensus exits with one unconsumed.
+        if timeout == 0:
+            return set(), set(tasks)
+        return await original_wait(tasks, return_when=asyncio.ALL_COMPLETED)
+
+    monkeypatch.setattr(runtime_module.asyncio, 'wait', batch_completed)
+    asyncio.run(runtime.capture_and_recognise())
+    report = json.loads((Path(runtime.last_audit_path) / 'scan.json').read_text())
+    assert report['outcome'] == 'known_match'
+    assert sorted(f['status'] for f in report['frames']) == [
+        'inference_completed', 'processed', 'processed']
+    assert report['detection_count'] == 3
+    assert all(f['detections'][0]['plate'] == 'ZZ99ZZZ' for f in report['frames'])
+    assert len(events) == 1
+    assert 'ZZ99ZZZ' not in json.dumps(runtime.last_scan_report)
+
+
+@pytest.mark.parametrize('cancelled', [False, True])
+def test_final_timing_includes_failed_and_cancelled_requests(runtime_module, monkeypatch, tmp_path, cancelled):
+    runtime, _, _, _, events = setup_scan(runtime_module, monkeypatch, tmp_path, [[]])
+
+    async def run():
+        requested = asyncio.Event()
+
+        class Response:
+            async def __aenter__(self):
+                requested.set()
+                if cancelled:
+                    await asyncio.Event().wait()
+                else:
+                    await asyncio.sleep(.02)
+                raise TimeoutError('backend timeout')
+            async def __aexit__(self, *args):
+                pass
+
+        class Session:
+            def post(self, *args, **kwargs):
+                return Response()
+
+        monkeypatch.setattr(runtime_module, 'async_get_clientsession', lambda hass: Session())
+        runtime.start_capture()
+        if cancelled:
+            await requested.wait()
+            await asyncio.sleep(.02)
+            await runtime.close()
+        else:
+            await runtime.task
+
+    asyncio.run(run())
+    report = json.loads((Path(runtime.last_audit_path) / 'scan.json').read_text())
+    assert report['frames'][0]['status'] == ('inference_cancelled' if cancelled else 'inference_failed')
+    assert report['inference_ms'] == sum(f.get('inference_ms', 0) for f in report['frames'])
+    assert runtime.last_inference_ms == report['inference_ms'] >= 15
+    assert not events

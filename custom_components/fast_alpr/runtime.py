@@ -111,7 +111,8 @@ class FastAlprRuntime:
             self.backend_ready = ready
             self.notify()
 
-    async def _recognise_frame(self, index: int, content: bytes, mime: str, endpoint: str, capture_id: str, frame: dict):
+    async def _recognise_frame(self, index: int, content: bytes, mime: str, endpoint: str, capture_id: str, frame: dict,
+                               candidate_ids: dict, min_confidence: float):
         began = time.monotonic()
         frame["inference_requested_at"] = datetime.now(timezone.utc).isoformat()
         frame["status"] = "inference_pending"
@@ -129,6 +130,17 @@ class FastAlprRuntime:
             detections = data.get("detections")
             if not isinstance(detections, list):
                 raise ValueError("Inference backend returned invalid detections")
+            # Record evidence even if consensus never consumes this task.
+            frame["detections"] = []
+            for detection in detections:
+                plate = normalize_plate(detection.get("plate", ""))
+                score = float(detection.get("confidence", 0))
+                candidate = candidate_ids.setdefault(plate, len(candidate_ids) + 1)
+                reason = ("invalid_plate" if not PLATE_PATTERN.fullmatch(plate) else
+                          "below_confidence" if score < min_confidence else "accepted")
+                frame["detections"].append({"plate": plate, "candidate": candidate,
+                                            "confidence": score, "reason": reason})
+            frame["status"] = "inference_completed"
             return index, detections, int((time.monotonic() - began) * 1000)
         except asyncio.CancelledError:
             frame["status"] = "inference_cancelled"
@@ -253,15 +265,6 @@ class FastAlprRuntime:
                     # Prefer known registrations when several plates agree.
                     frame = report["frames"][index]
                     frame["status"] = "processed"
-                    frame["detections"] = []
-                    for detection in detections:
-                        plate = normalize_plate(detection.get("plate", ""))
-                        score = float(detection.get("confidence", 0))
-                        candidate = candidate_ids.setdefault(plate, len(candidate_ids) + 1)
-                        reason = ("invalid_plate" if not PLATE_PATTERN.fullmatch(plate) else
-                                  "below_confidence" if score < consensus.min_confidence else "accepted")
-                        frame["detections"].append({"plate": plate, "candidate": candidate,
-                                                    "confidence": score, "reason": reason})
                     matches = consensus.add(index, detections)
                     frame["votes"] = {str(candidate_ids[p]): len(scores) for p, scores in consensus.observations.items()}
                     if report["outcome"] != "cooldown_suppressed":
@@ -323,7 +326,8 @@ class FastAlprRuntime:
                 if options.get(CONF_CAPTURE_AUDIT, False):
                     images.append((index, image.content_type, image.content))
                 pending.add(self.hass.async_create_task(
-                    self._recognise_frame(index, image.content, image.content_type, endpoint, capture_id, frame)
+                    self._recognise_frame(index, image.content, image.content_type, endpoint, capture_id, frame,
+                                          candidate_ids, consensus.min_confidence)
                 ))
                 if await consume(0):
                     return
@@ -346,6 +350,9 @@ class FastAlprRuntime:
                 task.cancel()
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
+            # Include every finished request, including failures and cancellations.
+            accumulated_inference_ms = sum(
+                frame.get("inference_ms", 0) for frame in report["frames"])
             # Completed scans count even when no known registration was present.
             self.last_processed = capture_id
             self.last_scan_ms = round((time.monotonic() - started) * 1000)

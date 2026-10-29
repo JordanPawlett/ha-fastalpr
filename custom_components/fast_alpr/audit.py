@@ -20,10 +20,16 @@ def save_scan(root: Path, report: dict, images: list[tuple[int, str, bytes]], ke
     root.mkdir(parents=True, exist_ok=True)
     folder = root / report["capture_id"]
     folder.mkdir(exist_ok=False)
-    for index, mime, content in images:
-        suffix = "png" if mime == "image/png" else "jpg"
-        (folder / f"frame_{index + 1:02d}.{suffix}").write_bytes(content)
-    (folder / "scan.json").write_text(json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")
+    try:
+        for index, mime, content in images:
+            suffix = "png" if mime == "image/png" else "jpg"
+            (folder / f"frame_{index + 1:02d}.{suffix}").write_bytes(content)
+        (folder / "scan.json").write_text(json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")
+    except Exception:
+        # Remove partial private images before reporting the failed write.
+        # Do not suppress cleanup failures: callers must know if files remain.
+        shutil.rmtree(folder)
+        raise
     scans = sorted(
         (p for p in root.iterdir() if SCAN_NAME.fullmatch(p.name)
          and not p.is_symlink() and p.is_dir()),

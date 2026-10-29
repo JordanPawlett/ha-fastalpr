@@ -1,0 +1,27 @@
+name: Publish reviewed FastALPR 0.7.1
+on:
+  push:
+    branches: [release/publish-0.7.1]
+    paths: [.github/workflows/publish-reviewed-release.yml]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish reviewed release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: JordanPawlett/ha-fastalpr
+        run: |
+          cat > release-notes.md <<'NOTES'
+          Fixes the three audit reliability issues identified in PR #9:
+          - Remove incomplete audit bundles when image or report writes fail, surfacing cleanup errors.
+          - Preserve completed OCR results when later snapshots fail or consensus exits early, without publishing extra matches.
+          - Include failed and cancelled inference requests in final scan timings and the inference-time sensor.
+
+          Includes FastALPR integration 0.7.1. The inference backend remains at 0.3.0 and does not need an update. Existing recognition settings and audit retention are preserved.
+
+          Validation: all 39 tests passed, including six regression cases. PRs #10 and #11 passed CI and completed Copilot review with no open findings before merge.
+          NOTES
+          gh release create v0.7.1 --target 93bddd6efe6a2dc4f0444a7a8c853e886e3751f6 --title "FastALPR 0.7.1 — Audit reliability fixes" --notes-file release-notes.md

@@ -18,6 +18,8 @@ PORT = 8099
 MAX_IMAGE_BYTES = 16 * 1024 * 1024
 MAX_JSON_BYTES = 64 * 1024
 MAX_BATCH_IMAGES = 20
+DETECTOR_MODEL = "yolo-v9-t-640-license-plate-end2end"
+OCR_MODEL = "cct-s-v2-global-model"
 MEDIA_DIR = Path("/media").resolve()
 LOGGER = logging.getLogger("fastalpr_backend")
 _MODEL = None
@@ -30,8 +32,8 @@ def _model():
     if _MODEL is None:
         from fast_alpr import ALPR
         _MODEL = ALPR(
-            detector_model="yolo-v9-t-384-license-plate-end2end",
-            ocr_model="cct-s-v2-global-model",
+            detector_model=DETECTOR_MODEL,
+            ocr_model=OCR_MODEL,
         )
     _MODEL_READY.set()
     return _MODEL

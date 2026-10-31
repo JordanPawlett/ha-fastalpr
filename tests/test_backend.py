@@ -2,6 +2,7 @@
 import importlib.util
 from pathlib import Path
 from sys import modules
+from types import SimpleNamespace
 
 import pytest
 
@@ -34,8 +35,25 @@ def test_media_path_confinement(tmp_path, monkeypatch):
 
 
 def test_confidence_mean():
-    from types import SimpleNamespace
     assert server._confidence(SimpleNamespace(confidence=[0.5, 1.0])) == 0.75
+
+
+def test_model_uses_high_resolution_detector(monkeypatch):
+    calls = {}
+
+    class ALPR:
+        def __init__(self, **kwargs):
+            calls.update(kwargs)
+
+    monkeypatch.setitem(modules, "fast_alpr", SimpleNamespace(ALPR=ALPR))
+    monkeypatch.setattr(server, "_MODEL", None)
+    model = server._model()
+
+    assert isinstance(model, ALPR)
+    assert calls == {
+        "detector_model": "yolo-v9-t-640-license-plate-end2end",
+        "ocr_model": "cct-s-v2-global-model",
+    }
 
 
 def test_recognition_http_reports_correlated_timings_without_plates(monkeypatch, caplog):
@@ -43,7 +61,6 @@ def test_recognition_http_reports_correlated_timings_without_plates(monkeypatch,
     import logging
     import threading
     import urllib.request
-    from types import SimpleNamespace
     class Model:
         def predict(self, path):
             assert Path(path).read_bytes() == b'\xff\xd8\xffimage'

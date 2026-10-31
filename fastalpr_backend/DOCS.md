@@ -8,6 +8,10 @@ The native Home Assistant integration calls `POST /recognize` with the binary co
 
 The first inference may take additional time while weights are downloaded.
 
+The backend uses the `yolo-v9-t-640-license-plate-end2end` detector. Its 640-pixel
+input preserves substantially more detail than the 384-pixel variant for small,
+glare-affected plates; no fixed crop is applied because camera framing differs.
+
 ## Correlated recognition diagnostics
 
 `POST /recognize` accepts optional `X-Capture-ID` (32 lowercase hexadecimal

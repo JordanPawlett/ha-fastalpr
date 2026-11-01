@@ -241,7 +241,7 @@ def test_completed_results_survive_later_capture_failure(runtime_module, monkeyp
     asyncio.run(run())
     report = json.loads((Path(runtime.last_audit_path) / 'scan.json').read_text())
     assert report['outcome'] == 'error'
-    assert report['frames'][0]['status'] == 'inference_completed'
+    assert report['frames'][0]['status'] == 'processed'
     assert report['frames'][0]['detections'][0]['plate'] == 'ZZ99ZZZ'
     assert report['detection_count'] == 1
     assert not events
@@ -254,7 +254,9 @@ def test_early_consensus_retains_unconsumed_completed_results(runtime_module, mo
         [[{'plate': 'ZZ99ZZZ', 'confidence': .95}]] * 3)
     original_wait = asyncio.wait
 
-    async def batch_completed(tasks, *, timeout, return_when):
+    async def batch_completed(tasks, *, timeout=None, return_when):
+        if any(t.get_coro().__name__ == "capture_frame" for t in tasks):
+            return await original_wait(tasks, timeout=timeout, return_when=return_when)
         # Collect all three results together so consensus exits with one unconsumed.
         if timeout == 0:
             return set(), set(tasks)
@@ -309,3 +311,135 @@ def test_final_timing_includes_failed_and_cancelled_requests(runtime_module, mon
     assert report['inference_ms'] == sum(f.get('inference_ms', 0) for f in report['frames'])
     assert runtime.last_inference_ms == report['inference_ms'] >= 15
     assert not events
+
+
+@pytest.mark.parametrize("known", [True, False])
+def test_consensus_publishes_while_next_snapshot_is_blocked(runtime_module, monkeypatch, tmp_path, known):
+    plate = "ZZ99ZZZ" if known else "AA00AAA"
+    runtime, _, submitted, _, events = setup_scan(runtime_module, monkeypatch, tmp_path,
+        [[{"plate": plate, "confidence": .95}]] * 4)
+    original_camera = runtime_module.async_get_image
+    original_recognise = runtime._recognise_frame
+
+    async def run():
+        third_started = asyncio.Event()
+        cancelled = asyncio.Event()
+        tasks = []
+        calls = 0
+
+        def create_task(coro):
+            task = asyncio.create_task(coro)
+            tasks.append(task)
+            return task
+
+        async def camera(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 3:
+                third_started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    assert len(events) == 1
+                    cancelled.set()
+            return await original_camera(*args, **kwargs)
+
+        async def recognise(index, *args):
+            if index == 1:
+                await third_started.wait()
+            return await original_recognise(index, *args)
+
+        runtime.hass.async_create_task = create_task
+        monkeypatch.setattr(runtime_module, "async_get_image", camera)
+        monkeypatch.setattr(runtime, "_recognise_frame", recognise)
+        await asyncio.wait_for(runtime.capture_and_recognise(), timeout=1)
+        assert cancelled.is_set()
+        assert all(t.done() for t in tasks)
+
+    asyncio.run(run())
+    assert runtime.last_scan_outcome == ("known_match" if known else "unknown_match")
+    assert len(events) == 1
+    assert len(submitted) == 2
+    report = json.loads((Path(runtime.last_audit_path) / "scan.json").read_text())
+    assert report["frames"][2]["status"] == "capture_cancelled"
+    assert "snapshot_received_at" not in report["frames"][2]
+    assert report["capture_ms"] == sum(f["capture_ms"] for f in report["frames"])
+    assert report["max_agreeing_frames"] == 2
+    assert not (Path(runtime.last_audit_path) / "frame_03.jpg").exists()
+
+
+
+def test_capture_totals_exclude_result_processing_time(runtime_module, monkeypatch, tmp_path):
+    runtime, _, _, _, _ = setup_scan(runtime_module, monkeypatch, tmp_path, [[], [], []])
+    clock = runtime_module.time.monotonic
+    offset = 0
+    original_add = runtime_module.PlateConsensus.add
+
+    def add(self, *args):
+        nonlocal offset
+        offset += .020
+        return original_add(self, *args)
+
+    monkeypatch.setattr(runtime_module, "time", SimpleNamespace(monotonic=lambda: clock() + offset))
+    monkeypatch.setattr(runtime_module.PlateConsensus, "add", add)
+    asyncio.run(runtime.capture_and_recognise())
+    report = runtime.last_scan_report
+    assert report["capture_ms"] == sum(f["capture_ms"] for f in report["frames"])
+
+
+def test_close_during_capture_cleanup_cancels_all_inference(runtime_module, monkeypatch, tmp_path):
+    runtime, _, _, _, events = setup_scan(runtime_module, monkeypatch, tmp_path,
+        [[{"plate": "ZZ99ZZZ", "confidence": .95}]] * 5)
+    original_camera = runtime_module.async_get_image
+    original_recognise = runtime._recognise_frame
+
+    async def run():
+        fourth_started = asyncio.Event()
+        cleanup_started = asyncio.Event()
+        inference_cancelled = asyncio.Event()
+        tasks = []
+        calls = 0
+
+        def create_task(coro):
+            task = asyncio.create_task(coro)
+            tasks.append(task)
+            return task
+
+        async def camera(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 4:
+                fourth_started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    cleanup_started.set()
+                    await asyncio.Event().wait()
+            return await original_camera(*args, **kwargs)
+
+        async def recognise(index, *args):
+            if index == 0:
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    inference_cancelled.set()
+            if index == 2:
+                await fourth_started.wait()
+            return await original_recognise(index, *args)
+
+        runtime.hass.async_create_task = create_task
+        monkeypatch.setattr(runtime_module, "async_get_image", camera)
+        monkeypatch.setattr(runtime, "_recognise_frame", recognise)
+        runtime.start_capture()
+        try:
+            await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+            assert len(events) == 1
+            await asyncio.wait_for(runtime.close(), timeout=1)
+            assert inference_cancelled.is_set()
+            assert all(t.done() for t in tasks)
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    asyncio.run(run())

@@ -223,6 +223,7 @@ class FastAlprRuntime:
         options = self.options
         capture_id = uuid4().hex
         pending: set[asyncio.Task] = set()
+        capture_task: asyncio.Task | None = None
         accumulated_capture_ms = 0
         accumulated_inference_ms = 0
         images = []
@@ -305,16 +306,33 @@ class FastAlprRuntime:
                          "request_offset_ms": round((began - started) * 1000), "status": "capture_pending"}
                 report["frames"].append(frame)
                 _LOGGER.debug("Snapshot requested capture_id=%s frame=%s at=%s", capture_id, index + 1, frame["snapshot_requested_at"])
-                try:
-                    image = await async_get_image(self.hass, options[CONF_CAMERA], timeout=4)
-                except Exception as exc:
-                    frame["status"] = "capture_failed"
-                    frame["error_type"] = type(exc).__name__
-                    raise
-                finally:
-                    frame["snapshot_finished_at"] = datetime.now(timezone.utc).isoformat()
-                    frame["capture_ms"] = int((time.monotonic() - began) * 1000)
-                    accumulated_capture_ms += frame["capture_ms"]
+                async def capture_frame():
+                    nonlocal accumulated_capture_ms
+                    try:
+                        return await async_get_image(self.hass, options[CONF_CAMERA], timeout=4)
+                    except asyncio.CancelledError:
+                        frame["status"] = "capture_cancelled"
+                        raise
+                    except Exception as exc:
+                        frame["status"] = "capture_failed"
+                        frame["error_type"] = type(exc).__name__
+                        raise
+                    finally:
+                        frame["snapshot_finished_at"] = datetime.now(timezone.utc).isoformat()
+                        frame["capture_ms"] = int((time.monotonic() - began) * 1000)
+                        accumulated_capture_ms += frame["capture_ms"]
+
+                capture_task = self.hass.async_create_task(capture_frame())
+                while not capture_task.done():
+                    await asyncio.wait(
+                        pending | {capture_task}, return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    # Consume recognition before reading the next snapshot result,
+                    # even when both finish together (or that snapshot fails).
+                    if await consume(0):
+                        return
+                image = capture_task.result()
+                capture_task = None
                 frame["snapshot_received_at"] = datetime.now(timezone.utc).isoformat()
                 frame["capture_ms"] = int((time.monotonic() - began) * 1000)
                 frame["bytes"] = len(image.content)
@@ -346,6 +364,10 @@ class FastAlprRuntime:
         else:
             self.last_error = None
         finally:
+            # Publish happens before cleanup; no unused snapshot may delay a match.
+            if capture_task is not None:
+                capture_task.cancel()
+                await asyncio.gather(capture_task, return_exceptions=True)
             for task in pending:
                 task.cancel()
             if pending:
@@ -398,3 +420,4 @@ class FastAlprRuntime:
             self.task.cancel()
             with suppress(asyncio.CancelledError):
                 await self.task
+

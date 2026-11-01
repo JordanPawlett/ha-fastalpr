@@ -334,7 +334,6 @@ class FastAlprRuntime:
                 image = capture_task.result()
                 capture_task = None
                 frame["snapshot_received_at"] = datetime.now(timezone.utc).isoformat()
-                frame["capture_ms"] = int((time.monotonic() - began) * 1000)
                 frame["bytes"] = len(image.content)
                 frame["sha256"] = hashlib.sha256(image.content).hexdigest()
                 frame["status"] = "captured"
@@ -365,13 +364,11 @@ class FastAlprRuntime:
             self.last_error = None
         finally:
             # Publish happens before cleanup; no unused snapshot may delay a match.
-            if capture_task is not None:
-                capture_task.cancel()
-                await asyncio.gather(capture_task, return_exceptions=True)
-            for task in pending:
+            cleanup_tasks = pending | ({capture_task} if capture_task is not None else set())
+            for task in cleanup_tasks:
                 task.cancel()
-            if pending:
-                await asyncio.gather(*pending, return_exceptions=True)
+            if cleanup_tasks:
+                await asyncio.gather(*cleanup_tasks, return_exceptions=True)
             # Include every finished request, including failures and cancellations.
             accumulated_inference_ms = sum(
                 frame.get("inference_ms", 0) for frame in report["frames"])
@@ -420,4 +417,3 @@ class FastAlprRuntime:
             self.task.cancel()
             with suppress(asyncio.CancelledError):
                 await self.task
-

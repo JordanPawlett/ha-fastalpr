@@ -74,6 +74,16 @@ jobs:
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "Release $tag already exists"
           else
-            gh release create "$tag" --target "$GITHUB_SHA" --title "FastALPR $version" --generate-notes
+            git fetch --tags origin
+            if git show-ref --verify --quiet "refs/tags/$tag"; then
+              tagged_commit=$(git rev-parse "$tag^{commit}")
+              if [[ "$tagged_commit" != "$GITHUB_SHA" ]]; then
+                echo "Tag $tag does not point to the validated commit" >&2
+                exit 1
+              fi
+            else
+              git tag "$tag" "$GITHUB_SHA"
+              git push origin "refs/tags/$tag"
+            fi
+            gh release create "$tag" --verify-tag --title "FastALPR $version" --generate-notes
           fi
-
